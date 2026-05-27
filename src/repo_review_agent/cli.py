@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .agent import RepoReviewAgent
 from .analyzer import analyze_repository
 from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .report import render_markdown, write_json, write_markdown
@@ -17,30 +18,43 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     with resolve_target(args.target) as repo_path:
-        report = analyze_repository(
-            repo_path,
-            max_files=args.max_files,
-            max_file_size=args.max_file_size,
-        )
-        if args.ai_provider != "none":
-            try:
-                report = add_ai_review(
-                    report,
-                    provider=args.ai_provider,
-                    model=args.ai_model,
-                    timeout=args.ai_timeout,
-                    max_output_tokens=args.ai_max_output_tokens,
-                    ollama_url=args.ollama_url,
-                )
-            except AIProviderError as exc:
-                if args.fail_on_ai_error:
-                    raise SystemExit(str(exc)) from exc
-                report = attach_ai_error(
-                    report,
-                    provider=args.ai_provider,
-                    model=args.ai_model,
-                    error=str(exc),
-                )
+        if args.agent:
+            agent = RepoReviewAgent(
+                max_files=args.max_files,
+                max_file_size=args.max_file_size,
+                ai_provider=args.ai_provider,
+                ai_model=args.ai_model,
+                ai_timeout=args.ai_timeout,
+                ai_max_output_tokens=args.ai_max_output_tokens,
+                ollama_url=args.ollama_url,
+                fail_on_ai_error=args.fail_on_ai_error,
+            )
+            report = agent.run(repo_path)
+        else:
+            report = analyze_repository(
+                repo_path,
+                max_files=args.max_files,
+                max_file_size=args.max_file_size,
+            )
+            if args.ai_provider != "none":
+                try:
+                    report = add_ai_review(
+                        report,
+                        provider=args.ai_provider,
+                        model=args.ai_model,
+                        timeout=args.ai_timeout,
+                        max_output_tokens=args.ai_max_output_tokens,
+                        ollama_url=args.ollama_url,
+                    )
+                except AIProviderError as exc:
+                    if args.fail_on_ai_error:
+                        raise SystemExit(str(exc)) from exc
+                    report = attach_ai_error(
+                        report,
+                        provider=args.ai_provider,
+                        model=args.ai_model,
+                        error=str(exc),
+                    )
 
         if args.output:
             write_markdown(report, args.output)
@@ -63,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("target", help="Local repository path or GitHub URL")
     parser.add_argument("-o", "--output", type=Path, help="Write Markdown report to this path")
     parser.add_argument("--json", type=Path, help="Write structured JSON report to this path")
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Run the custom tool-calling RepoReviewAgent instead of the direct analysis pipeline.",
+    )
     parser.add_argument(
         "--ai-provider",
         choices=["none", "openai", "ollama"],

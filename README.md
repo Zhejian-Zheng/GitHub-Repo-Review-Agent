@@ -10,6 +10,7 @@ The MVP is intentionally small and reproducible: it runs without an LLM API key,
 - Detects source languages, dependency manifests, test files, docs, CI workflows, and common framework signals.
 - Flags project hygiene risks such as missing tests, missing CI, missing license, missing dependency manifests, and possible hard-coded secrets.
 - Generates a Markdown review report and optional JSON output.
+- Includes a custom `RepoReviewAgent` that uses a traceable tool-calling loop.
 - Adds an optional AI review section through OpenAI or local Ollama.
 - Includes unit tests and a GitHub Actions workflow.
 
@@ -33,6 +34,19 @@ Run without installing the package:
 PYTHONPATH=src python -m repo_review_agent.cli . --output review-report.md
 ```
 
+Run the custom agent loop:
+
+```bash
+PYTHONPATH=src python -m repo_review_agent.cli . --agent --output review-report.md --json review-report.json
+```
+
+The agent records each step in the generated report:
+
+```text
+Thought -> Action/tool -> Observation
+scan_repository -> inspect_file -> analyze_repository -> finalize_report
+```
+
 Analyze another local repository:
 
 ```bash
@@ -50,6 +64,12 @@ Enable the OpenAI AI layer:
 ```bash
 export OPENAI_API_KEY="your_api_key_here"
 repo-review . --ai-provider openai --output review-report.md
+```
+
+Run the custom agent with OpenAI synthesis:
+
+```bash
+repo-review . --agent --ai-provider openai --output review-report.md
 ```
 
 Use a specific OpenAI model:
@@ -87,6 +107,7 @@ The generated report includes:
 
 ```text
 src/repo_review_agent/
+  agent.py      # Custom tool-calling agent orchestration layer
   analyzer.py   # Rule-based review logic
   cli.py        # Command-line interface
   llm.py        # Optional OpenAI and Ollama AI review layer
@@ -100,7 +121,7 @@ tests/          # Unit tests
 ## Resume Talking Points
 
 - Built a lightweight code review agent with structured outputs and deterministic analysis.
-- Implemented repository scanning, framework detection, risk classification, report generation, and optional LLM-based review synthesis.
+- Implemented a custom tool-calling agent loop for repository scanning, file inspection, risk classification, report generation, and optional LLM-based review synthesis.
 - Added security checks for secret-like values and project hygiene checks for tests, CI, dependency manifests, and licensing.
 - Designed a hybrid architecture that works offline by default and can use OpenAI or Ollama when model reasoning is available.
 

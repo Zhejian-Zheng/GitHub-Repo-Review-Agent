@@ -39,6 +39,16 @@ def render_markdown(report: ReviewReport) -> str:
             lines.append(f"AI review was not generated: `{report.ai_review.error}`")
         lines.append("")
 
+    if report.agent_trace:
+        lines.extend(["", "## Agent Trace", ""])
+        for index, step in enumerate(report.agent_trace, start=1):
+            lines.append(f"### Step {index}: `{step.tool}`")
+            lines.append("")
+            lines.append(f"- Thought: {step.thought}")
+            lines.append(f"- Input: `{json.dumps(step.tool_input, ensure_ascii=False)}`")
+            lines.append(f"- Observation: {step.observation}")
+            lines.append("")
+
     lines.extend(["", "## Findings", ""])
     for index, finding in enumerate(report.findings, start=1):
         lines.extend(_render_finding(index, finding))

@@ -48,6 +48,14 @@ class AIReview:
 
 
 @dataclass(frozen=True)
+class AgentStep:
+    thought: str
+    tool: str
+    tool_input: dict[str, Any]
+    observation: str
+
+
+@dataclass(frozen=True)
 class ReviewReport:
     repo_name: str
     generated_at: str
@@ -56,6 +64,7 @@ class ReviewReport:
     framework_signals: dict[str, list[str]]
     findings: list[Finding]
     ai_review: AIReview | None = None
+    agent_trace: list[AgentStep] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
