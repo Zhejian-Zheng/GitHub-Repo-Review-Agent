@@ -1,0 +1,35 @@
+services:
+  repo-review:
+    build: .
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - .:/workspace:ro
+      - ./reports:/reports
+    command:
+      - /workspace
+      - --agent
+      - --output
+      - /reports/review-report.md
+      - --json
+      - /reports/review-report.json
+
+  web:
+    profiles:
+      - web
+    build: .
+    entrypoint:
+      - repo-review-web
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+    volumes:
+      - .:/workspace:ro
+    ports:
+      - "8000:8000"

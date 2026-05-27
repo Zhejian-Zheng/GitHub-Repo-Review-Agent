@@ -25,6 +25,22 @@ classifiers = [
 
 [project.scripts]
 repo-review = "repo_review_agent.cli:main"
+repo-review-web = "repo_review_agent.web:main"
+repo-review-mcp = "repo_review_agent.mcp_server:main"
+
+[project.optional-dependencies]
+web = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+]
+mcp = [
+  "mcp>=1.0",
+]
+all = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "mcp>=1.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
