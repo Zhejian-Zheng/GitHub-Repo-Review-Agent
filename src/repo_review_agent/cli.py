@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .analyzer import analyze_repository
+from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .report import render_markdown, write_json, write_markdown
 
 
@@ -21,6 +22,25 @@ def main(argv: list[str] | None = None) -> int:
             max_files=args.max_files,
             max_file_size=args.max_file_size,
         )
+        if args.ai_provider != "none":
+            try:
+                report = add_ai_review(
+                    report,
+                    provider=args.ai_provider,
+                    model=args.ai_model,
+                    timeout=args.ai_timeout,
+                    max_output_tokens=args.ai_max_output_tokens,
+                    ollama_url=args.ollama_url,
+                )
+            except AIProviderError as exc:
+                if args.fail_on_ai_error:
+                    raise SystemExit(str(exc)) from exc
+                report = attach_ai_error(
+                    report,
+                    provider=args.ai_provider,
+                    model=args.ai_model,
+                    error=str(exc),
+                )
 
         if args.output:
             write_markdown(report, args.output)
@@ -43,6 +63,38 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("target", help="Local repository path or GitHub URL")
     parser.add_argument("-o", "--output", type=Path, help="Write Markdown report to this path")
     parser.add_argument("--json", type=Path, help="Write structured JSON report to this path")
+    parser.add_argument(
+        "--ai-provider",
+        choices=["none", "openai", "ollama"],
+        default="none",
+        help="Optional LLM provider used to generate an AI review section",
+    )
+    parser.add_argument(
+        "--ai-model",
+        help="Model name for the selected AI provider. Defaults to OPENAI_MODEL, OLLAMA_MODEL, or a provider default.",
+    )
+    parser.add_argument(
+        "--ai-timeout",
+        type=float,
+        default=60,
+        help="Timeout in seconds for the optional AI provider request",
+    )
+    parser.add_argument(
+        "--ai-max-output-tokens",
+        type=int,
+        default=900,
+        help="Maximum output tokens requested from the optional AI provider",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default=None,
+        help="Base URL for Ollama. Defaults to OLLAMA_BASE_URL or http://localhost:11434.",
+    )
+    parser.add_argument(
+        "--fail-on-ai-error",
+        action="store_true",
+        help="Exit with an error if the optional AI provider call fails.",
+    )
     parser.add_argument("--max-files", type=int, default=500, help="Maximum number of files to scan")
     parser.add_argument(
         "--max-file-size",

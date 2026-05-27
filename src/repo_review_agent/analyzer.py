@@ -15,6 +15,18 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 ]
 
+PLACEHOLDER_SECRET_TERMS = {
+    "your_",
+    "your-",
+    "example",
+    "placeholder",
+    "dummy",
+    "changeme",
+    "change_me",
+    "replace_me",
+    "replace-this",
+}
+
 
 def analyze_repository(
     root: Path,
@@ -255,11 +267,20 @@ def find_secret_like_values(snapshot: RepositorySnapshot, root: Path) -> list[st
     for file in candidate_files[:250]:
         text = read_text_file(root, file.path, limit=80_000)
         for pattern in SECRET_PATTERNS:
-            if pattern.search(text):
+            matches = [match.group(0) for match in pattern.finditer(text)]
+            real_matches = [
+                match for match in matches if not _looks_like_secret_placeholder(match)
+            ]
+            if real_matches:
                 evidence.append(f"{file.path}: secret-like value matched {pattern.pattern!r}")
                 break
 
     return evidence
+
+
+def _looks_like_secret_placeholder(match_text: str) -> bool:
+    normalized = match_text.lower()
+    return any(term in normalized for term in PLACEHOLDER_SECRET_TERMS)
 
 
 def _detect_package_json(signals: dict[str, list[str]], root: Path, rel_path: str) -> None:

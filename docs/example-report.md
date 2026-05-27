@@ -1,24 +1,24 @@
 # Repository Review: GitHub-Repo-Review-Agent
 
-Generated: `2026-05-27T06:47:24+00:00`
+Generated: `2026-05-27T07:00:28+00:00`
 
 ## Executive Summary
 
-- Primary source languages detected: Python (6).
+- Primary source languages detected: Python (7).
 - Dependency manifests found: pyproject.toml.
-- Test coverage surface detected through 2 test file(s).
+- Test coverage surface detected through 3 test file(s).
 - CI configuration detected: .github/workflows/ci.yml.
 - Framework and tooling signals: CI/CD.
 
 ## Metrics
 
-- Files scanned: `16`
+- Files scanned: `18`
 - Files skipped: `0`
-- Source files: `6`
-- Test files: `2`
+- Source files: `7`
+- Test files: `3`
 - Dependency manifests: `1`
 - CI files: `1`
-- Languages: `Python: 6`
+- Languages: `Python: 7`
 
 ## Framework Signals
 

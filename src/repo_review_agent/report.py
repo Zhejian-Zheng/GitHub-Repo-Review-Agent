@@ -27,6 +27,18 @@ def render_markdown(report: ReviewReport) -> str:
     else:
         lines.append("- No framework signals were detected.")
 
+    if report.ai_review:
+        lines.extend(["", "## AI Review", ""])
+        lines.append(f"- Provider: `{report.ai_review.provider}`")
+        lines.append(f"- Model: `{report.ai_review.model}`")
+        lines.append(f"- Status: `{report.ai_review.status}`")
+        lines.append("")
+        if report.ai_review.status == "generated":
+            lines.append(report.ai_review.summary)
+        else:
+            lines.append(f"AI review was not generated: `{report.ai_review.error}`")
+        lines.append("")
+
     lines.extend(["", "## Findings", ""])
     for index, finding in enumerate(report.findings, start=1):
         lines.extend(_render_finding(index, finding))

@@ -2,7 +2,7 @@
 
 A lightweight repository review agent that analyzes project structure, dependency files, source code, tests, CI configuration, and security hygiene to generate architecture summaries, risk reports, and actionable GitHub issue suggestions.
 
-The current MVP is intentionally small and reproducible: it runs without an LLM API key, produces structured JSON, and renders a Markdown report. That gives the project a reliable engineering core before adding optional OpenAI, Ollama, or LangGraph-based reasoning.
+The MVP is intentionally small and reproducible: it runs without an LLM API key, produces structured JSON, and renders a Markdown report. When enabled, the optional AI layer turns the deterministic scan into a concise architecture summary, risk explanation, next-step plan, and resume-ready project pitch.
 
 ## Features
 
@@ -10,6 +10,7 @@ The current MVP is intentionally small and reproducible: it runs without an LLM 
 - Detects source languages, dependency manifests, test files, docs, CI workflows, and common framework signals.
 - Flags project hygiene risks such as missing tests, missing CI, missing license, missing dependency manifests, and possible hard-coded secrets.
 - Generates a Markdown review report and optional JSON output.
+- Adds an optional AI review section through OpenAI or local Ollama.
 - Includes unit tests and a GitHub Actions workflow.
 
 ## Quick Start
@@ -26,6 +27,12 @@ Analyze the current repository:
 repo-review . --output review-report.md --json review-report.json
 ```
 
+Run without installing the package:
+
+```bash
+PYTHONPATH=src python -m repo_review_agent.cli . --output review-report.md
+```
+
 Analyze another local repository:
 
 ```bash
@@ -37,6 +44,28 @@ Analyze a GitHub repository:
 ```bash
 repo-review https://github.com/owner/repo --output review-report.md
 ```
+
+Enable the OpenAI AI layer:
+
+```bash
+export OPENAI_API_KEY="your_api_key_here"
+repo-review . --ai-provider openai --output review-report.md
+```
+
+Use a specific OpenAI model:
+
+```bash
+repo-review . --ai-provider openai --ai-model gpt-5-mini --output review-report.md
+```
+
+Enable the local Ollama AI layer:
+
+```bash
+ollama pull llama3.2
+repo-review . --ai-provider ollama --ai-model llama3.2 --output review-report.md
+```
+
+By default, AI provider errors are written into the report instead of failing the whole scan. Use `--fail-on-ai-error` when you want CI or automation to stop on model failures.
 
 Run tests:
 
@@ -60,6 +89,7 @@ The generated report includes:
 src/repo_review_agent/
   analyzer.py   # Rule-based review logic
   cli.py        # Command-line interface
+  llm.py        # Optional OpenAI and Ollama AI review layer
   models.py     # Structured report data models
   report.py     # Markdown and JSON report rendering
   scanner.py    # Repository scanning and file classification
@@ -70,13 +100,12 @@ tests/          # Unit tests
 ## Resume Talking Points
 
 - Built a lightweight code review agent with structured outputs and deterministic analysis.
-- Implemented repository scanning, framework detection, risk classification, and report generation.
+- Implemented repository scanning, framework detection, risk classification, report generation, and optional LLM-based review synthesis.
 - Added security checks for secret-like values and project hygiene checks for tests, CI, dependency manifests, and licensing.
-- Designed the project so an LLM provider can be added later without making the base tool dependent on paid API keys.
+- Designed a hybrid architecture that works offline by default and can use OpenAI or Ollama when model reasoning is available.
 
 ## Roadmap
 
-- Add optional LLM summaries through OpenAI or Ollama.
 - Add GitHub issue creation with a dry-run mode.
 - Add dependency vulnerability checks.
 - Add pull request comment mode for GitHub Actions.

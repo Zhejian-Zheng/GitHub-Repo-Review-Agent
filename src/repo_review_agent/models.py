@@ -39,6 +39,15 @@ class Finding:
 
 
 @dataclass(frozen=True)
+class AIReview:
+    provider: str
+    model: str
+    status: str
+    summary: str
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class ReviewReport:
     repo_name: str
     generated_at: str
@@ -46,6 +55,7 @@ class ReviewReport:
     metrics: dict[str, Any]
     framework_signals: dict[str, list[str]]
     findings: list[Finding]
+    ai_review: AIReview | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -35,6 +35,20 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(report.findings[0].title, "Remove possible hard-coded secrets")
         self.assertEqual(report.findings[0].severity, "high")
 
+    def test_analyzer_ignores_secret_placeholders(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text(
+                "export OPENAI_API_KEY=\"your_api_key_here\"\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+            report = analyze_repository(root)
+
+        titles = {finding.title for finding in report.findings}
+        self.assertNotIn("Remove possible hard-coded secrets", titles)
+
 
 if __name__ == "__main__":
     unittest.main()
