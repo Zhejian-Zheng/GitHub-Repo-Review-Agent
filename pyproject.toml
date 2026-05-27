@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "github-repo-review-agent"
+version = "0.1.0"
+description = "A lightweight repository review agent that generates architecture summaries, risk reports, and issue suggestions."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Zhejian Zheng" }
+]
+keywords = ["ai-agent", "code-review", "static-analysis", "github", "developer-tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.scripts]
+repo-review = "repo_review_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
