@@ -8,6 +8,8 @@ __pycache__/
 venv/
 dist/
 build/
+frontend/node_modules/
+frontend/dist/
 reports/
 review-report.md
 review-report.json

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .analyzer import analyze_snapshot
+from .i18n import ai_section_headings, language_display_name, normalize_report_language
 from .llm import (
     AIProviderError,
     OPENAI_RESPONSES_URL,
@@ -118,6 +119,7 @@ class OpenAIFunctionCallingAgent:
         max_output_tokens: int = 900,
         max_files: int = 500,
         max_file_size: int = 512_000,
+        report_language: str | None = None,
     ) -> None:
         self.model = resolve_model("openai", model)
         self.timeout = timeout
@@ -125,6 +127,7 @@ class OpenAIFunctionCallingAgent:
         self.max_output_tokens = max_output_tokens
         self.max_files = max_files
         self.max_file_size = max_file_size
+        self.report_language = normalize_report_language(report_language)
 
     def run(self, root: Path) -> ReviewReport:
         if not os.environ.get("OPENAI_API_KEY"):
@@ -139,6 +142,7 @@ class OpenAIFunctionCallingAgent:
                     "Review this repository as a hiring-portfolio AI agent. "
                     "Use tools before answering. First scan the repository, inspect important files, "
                     "run deterministic analysis, generate a report preview, then write the final review."
+                    f" Write the final review in {language_display_name(self.report_language)}."
                 ),
             }
         ]
@@ -199,7 +203,9 @@ class OpenAIFunctionCallingAgent:
                 "instructions": (
                     "You are a senior software engineer. Use the provided functions for repository facts. "
                     "Do not invent files or findings. After generate_report, provide concise Markdown with "
-                    "sections: AI Architecture Summary, Top Risks, Recommended Next Steps, Resume Pitch."
+                    "exactly these sections: "
+                    f"{', '.join(ai_section_headings(self.report_language))}. "
+                    f"Write the entire final answer in {language_display_name(self.report_language)}."
                 ),
             },
             timeout=self.timeout,
@@ -305,7 +311,7 @@ class OpenAIFunctionCallingAgent:
         if state.report is None:
             return {"ok": False, "error": "Report is unavailable."}
 
-        state.rendered_report = render_markdown(state.report)
+        state.rendered_report = render_markdown(state.report, language=self.report_language)
         return {
             "ok": True,
             "format": "markdown",

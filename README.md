@@ -10,9 +10,10 @@ The MVP is intentionally small and reproducible: it runs without an LLM API key,
 - Detects source languages, dependency manifests, test files, docs, CI workflows, and common framework signals.
 - Flags project hygiene risks such as missing tests, missing CI, missing license, missing dependency manifests, and possible hard-coded secrets.
 - Generates a Markdown review report and optional JSON output.
+- Supports English and Simplified Chinese report output.
 - Includes a custom `RepoReviewAgent` that uses a traceable tool-calling loop.
 - Includes an OpenAI Responses API function-calling agent where the model calls repository tools.
-- Adds an optional AI review section through OpenAI or local Ollama.
+- Adds an optional AI review section through OpenAI, OpenRouter, or local Ollama.
 - Creates GitHub issue drafts, can create GitHub issues, and can post pull request comments.
 - Provides optional Docker, FastAPI, and MCP server entry points.
 - Includes unit tests and a GitHub Actions workflow.
@@ -69,6 +70,12 @@ Analyze a GitHub repository:
 repo-review https://github.com/owner/repo --output review-report.md
 ```
 
+Generate a Simplified Chinese report:
+
+```bash
+repo-review . --agent --report-language zh-CN --output review-report.zh.md
+```
+
 Preview GitHub issues from findings:
 
 ```bash
@@ -114,6 +121,13 @@ Use a specific OpenAI model:
 repo-review . --ai-provider openai --ai-model gpt-5-mini --output review-report.md
 ```
 
+Enable OpenRouter:
+
+```bash
+export OPENROUTER_API_KEY="your_openrouter_key"
+repo-review . --ai-provider openrouter --ai-model openrouter/auto --output review-report.md
+```
+
 Enable the local Ollama AI layer:
 
 ```bash
@@ -155,12 +169,37 @@ python -m pip install -e ".[web]"
 repo-review-web
 ```
 
+The web UI is built with React, Vite, and Tailwind CSS. It lets users enter a GitHub repository URL, choose the report language, generate a Markdown report, then copy, download, or close the generated report.
+
+Run the React frontend in development mode:
+
+```bash
+repo-review-web
+cd frontend
+npm install
+npm run dev
+```
+
+Then open `http://localhost:5173`. Vite proxies `/review` to the FastAPI backend on `http://localhost:8000`.
+
+Build the React frontend and serve it from FastAPI:
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+repo-review-web
+```
+
+Then open `http://localhost:8000`.
+
 Review through the HTTP API:
 
 ```bash
 curl -X POST http://localhost:8000/review \
   -H "Content-Type: application/json" \
-  -d '{"target": ".", "mode": "agent", "ai_provider": "none"}'
+  -d '{"target": ".", "mode": "agent", "ai_provider": "openrouter", "ai_model": "openrouter/auto", "report_language": "zh-CN"}'
 ```
 
 ## MCP Server
@@ -210,7 +249,7 @@ src/repo_review_agent/
   cli.py        # Command-line interface
   function_agent.py # OpenAI function-calling agent
   github.py     # GitHub issues and PR comments
-  llm.py        # Optional OpenAI and Ollama AI review layer
+  llm.py        # Optional OpenAI, OpenRouter, and Ollama AI review layer
   mcp_server.py # MCP tools for AI coding assistants
   models.py     # Structured report data models
   report.py     # Markdown and JSON report rendering
@@ -218,6 +257,7 @@ src/repo_review_agent/
   web.py        # FastAPI app and minimal web UI
 tests/          # Unit tests
 .github/        # CI workflow
+frontend/       # React + Tailwind CSS frontend
 ```
 
 ## Resume Talking Points

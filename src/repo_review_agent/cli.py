@@ -17,6 +17,7 @@ from .github import (
     apply_github_pr_comment_mode,
     parse_github_repo,
 )
+from .i18n import localize_report
 from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .report import render_markdown, write_json, write_markdown
 
@@ -33,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_output_tokens=args.ai_max_output_tokens,
                 max_files=args.max_files,
                 max_file_size=args.max_file_size,
+                report_language=args.report_language,
             )
             try:
                 report = agent.run(repo_path)
@@ -48,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
                 ai_max_output_tokens=args.ai_max_output_tokens,
                 ollama_url=args.ollama_url,
                 fail_on_ai_error=args.fail_on_ai_error,
+                report_language=args.report_language,
             )
             report = agent.run(repo_path)
         else:
@@ -62,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
                         report,
                         provider=args.ai_provider,
                         model=args.ai_model,
+                        language=args.report_language,
                         timeout=args.ai_timeout,
                         max_output_tokens=args.ai_max_output_tokens,
                         ollama_url=args.ollama_url,
@@ -76,11 +80,13 @@ def main(argv: list[str] | None = None) -> int:
                         error=str(exc),
                     )
 
+        report = localize_report(report, args.report_language)
+
         if args.output:
-            write_markdown(report, args.output)
+            write_markdown(report, args.output, language=args.report_language)
             print(f"Markdown report written to {args.output}")
         else:
-            print(render_markdown(report))
+            print(render_markdown(report, language=args.report_language))
 
         if args.json:
             write_json(report, args.json)
@@ -139,13 +145,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--ai-provider",
-        choices=["none", "openai", "ollama"],
+        choices=["none", "openai", "openrouter", "ollama"],
         default="none",
         help="Optional LLM provider used to generate an AI review section",
     )
     parser.add_argument(
         "--ai-model",
         help="Model name for the selected AI provider. Defaults to OPENAI_MODEL, OLLAMA_MODEL, or a provider default.",
+    )
+    parser.add_argument(
+        "--report-language",
+        choices=["en", "zh-CN"],
+        default="en",
+        help="Language for generated Markdown and AI review content.",
     )
     parser.add_argument(
         "--ai-timeout",

@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f6f8fb;
+    color: #172033;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    background: #f6f8fb;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .field-label {
+    @apply mb-1.5 block text-sm font-bold text-ink;
+  }
+
+  .field-input {
+    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-ink outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+  }
+
+  .action-button {
+    @apply inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-ink transition hover:bg-slate-50;
+  }
+
+  .report-section {
+    @apply rounded-lg border border-slate-200 border-l-4 p-4 shadow-sm;
+  }
+
+  .report-list {
+    @apply list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-700;
+  }
+
+  .metric-card {
+    @apply rounded-md border border-slate-200 bg-white p-3;
+  }
+
+  .metric-card span {
+    @apply block text-xs font-bold uppercase tracking-[0.12em] text-muted;
+  }
+
+  .metric-card strong {
+    @apply mt-2 block text-2xl leading-none tracking-normal text-ink;
+  }
+
+  .trace-item {
+    @apply rounded-md border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-600;
+  }
+
+  .trace-item p {
+    @apply mt-2;
+  }
+
+  .markdown-summary {
+    @apply space-y-3 text-sm leading-relaxed text-slate-700;
+  }
+
+  .markdown-summary h4 {
+    @apply pt-1 text-base font-bold tracking-normal text-ink;
+  }
+
+  .markdown-summary ul {
+    @apply list-disc space-y-1.5 pl-5;
+  }
+
+  .markdown-summary code {
+    @apply rounded bg-white px-1.5 py-0.5 font-mono text-[0.92em] text-slate-800 ring-1 ring-slate-200;
+  }
+}

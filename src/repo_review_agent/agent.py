@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .analyzer import analyze_snapshot
+from .i18n import normalize_report_language
 from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .models import AgentStep, RepositorySnapshot, ReviewReport
 from .report import render_markdown
@@ -50,6 +51,7 @@ class RepoReviewAgent:
         ai_max_output_tokens: int = 900,
         ollama_url: str | None = None,
         fail_on_ai_error: bool = False,
+        report_language: str | None = None,
     ) -> None:
         self.max_files = max_files
         self.max_file_size = max_file_size
@@ -60,6 +62,7 @@ class RepoReviewAgent:
         self.ai_max_output_tokens = ai_max_output_tokens
         self.ollama_url = ollama_url
         self.fail_on_ai_error = fail_on_ai_error
+        self.report_language = normalize_report_language(report_language)
         self.tools: dict[str, ToolHandler] = {
             "scan_repository": self._tool_scan_repository,
             "inspect_file": self._tool_inspect_file,
@@ -224,6 +227,7 @@ class RepoReviewAgent:
                 state.report,
                 provider=provider,
                 model=model,
+                language=self.report_language,
                 timeout=self.ai_timeout,
                 max_output_tokens=self.ai_max_output_tokens,
                 ollama_url=self.ollama_url,
@@ -244,7 +248,7 @@ class RepoReviewAgent:
         if state.report is None:
             raise RuntimeError("analyze_repository must run before finalize_report.")
 
-        state.report_preview = render_markdown(state.report)[:1200]
+        state.report_preview = render_markdown(state.report, language=self.report_language)[:1200]
         state.finalized = True
         return f"Rendered Markdown preview with {len(state.report_preview)} character(s)."
 
