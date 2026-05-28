@@ -186,6 +186,11 @@ python -m unittest discover -s tests
 
 ## Example Output
 
+Generated examples:
+
+- [Agent report](docs/example-report.md)
+- [AI demo report with Ollama](docs/ai-demo-report.md)
+
 The generated report includes:
 
 - Executive summary
@@ -226,7 +231,7 @@ tests/          # Unit tests
 
 - Add GitHub Actions PR annotation mode.
 - Add richer repository dependency vulnerability checks.
-- Add screenshots and a captured real AI report after running with OpenAI or a local Ollama model.
+- Add screenshots of the web UI and sample report.
 
 ## License
 

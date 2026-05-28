@@ -15,6 +15,7 @@ This project is intended to demonstrate a lightweight but realistic AI agent eng
 - Dockerfile and Docker Compose workflow.
 - Optional FastAPI API and minimal web UI.
 - Optional MCP server exposing repository review tools.
+- Real AI demo report generated with local Ollama `llama3.2`.
 
 ## Resume Summary
 
@@ -22,7 +23,6 @@ Built a hybrid AI repository review agent that combines deterministic static ana
 
 ## Remaining Nice-to-Haves
 
-- Capture a real AI-generated demo report after configuring `OPENAI_API_KEY` or pulling an Ollama model.
 - Add dependency vulnerability checks.
 - Add GitHub Actions PR annotation mode.
 - Add screenshots of the web UI and sample report.
