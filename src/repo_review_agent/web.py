@@ -11,10 +11,17 @@ from .function_agent import OpenAIFunctionCallingAgent
 from .i18n import localize_report
 from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .report import render_markdown
+from .security import (
+    InMemoryRateLimiter,
+    client_identifier,
+    int_from_env,
+    request_token_matches,
+    validate_target_policy,
+)
 
 try:
     import uvicorn
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import FileResponse, HTMLResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, Field
@@ -32,6 +39,15 @@ FRONTEND_DIST = Path(
 )
 FRONTEND_INDEX = FRONTEND_DIST / "index.html"
 FRONTEND_ASSETS = FRONTEND_DIST / "assets"
+WEB_MAX_FILES_LIMIT = int_from_env("REPO_REVIEW_MAX_FILES_LIMIT", 1_000, minimum=1)
+WEB_MAX_FILE_SIZE_LIMIT = int_from_env(
+    "REPO_REVIEW_MAX_FILE_SIZE_LIMIT",
+    1_000_000,
+    minimum=1_024,
+)
+WEB_RATE_LIMITER = InMemoryRateLimiter(
+    limit_per_minute=int_from_env("REPO_REVIEW_RATE_LIMIT_PER_MINUTE", 0, minimum=0)
+)
 
 FALLBACK_HTML = """<!doctype html>
 <html lang="en">
@@ -60,15 +76,17 @@ class ReviewRequest(BaseModel):
     ai_provider: Literal["none", "openai", "openrouter", "ollama"] = "none"
     ai_model: str | None = None
     report_language: Literal["en", "zh-CN"] = "en"
-    max_files: int = 500
-    max_file_size: int = 512_000
+    max_files: int = Field(500, ge=1, le=WEB_MAX_FILES_LIMIT)
+    max_file_size: int = Field(512_000, ge=1_024, le=WEB_MAX_FILE_SIZE_LIMIT)
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0")
 
     @app.post("/review")
-    def review_repository(request: ReviewRequest) -> dict:
+    def review_repository(http_request: Request, request: ReviewRequest) -> dict:
+        enforce_public_api_controls(http_request, request.target)
+
         try:
             with resolve_target(request.target) as repo_path:
                 report = run_review_for_path(request, repo_path)
@@ -91,6 +109,24 @@ def create_app() -> FastAPI:
         return HTMLResponse(FALLBACK_HTML)
 
     return app
+
+
+def enforce_public_api_controls(http_request: Request, target: str) -> None:
+    expected_token = os.environ.get("REPO_REVIEW_API_TOKEN")
+    if not request_token_matches(http_request.headers, expected_token):
+        raise HTTPException(status_code=401, detail="Invalid or missing API token.")
+
+    client_id = client_identifier(
+        http_request.headers,
+        http_request.client.host if http_request.client else None,
+    )
+    if not WEB_RATE_LIMITER.allow(client_id):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
+
+    try:
+        validate_target_policy(target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def run_review_for_path(request: ReviewRequest, repo_path: Path):

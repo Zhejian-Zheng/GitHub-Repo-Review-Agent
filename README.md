@@ -16,6 +16,7 @@ The MVP is intentionally small and reproducible: it runs without an LLM API key,
 - Adds an optional AI review section through OpenAI, OpenRouter, or local Ollama.
 - Creates GitHub issue drafts, can create GitHub issues, and can post pull request comments.
 - Provides optional Docker, FastAPI, and MCP server entry points.
+- Includes production deployment examples for Docker Compose, Nginx, HTTPS, and public demo controls.
 - Includes unit tests and a GitHub Actions workflow.
 
 ## Quick Start
@@ -160,6 +161,15 @@ docker compose --profile web up --build web
 
 Then open `http://localhost:8000` and enter `/workspace` as the target when using Docker Compose.
 
+Run the production-style web service locally:
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.prod.yml up -d --build web
+```
+
+For VPS deployment with Nginx and HTTPS, see [Deployment Guide](docs/deployment.md).
+
 ## Web API
 
 Install optional web dependencies:
@@ -201,6 +211,8 @@ curl -X POST http://localhost:8000/review \
   -H "Content-Type: application/json" \
   -d '{"target": ".", "mode": "agent", "ai_provider": "openrouter", "ai_model": "openrouter/auto", "report_language": "zh-CN"}'
 ```
+
+For public demos, set `REPO_REVIEW_ALLOW_LOCAL_TARGETS=false` and `REPO_REVIEW_RATE_LIMIT_PER_MINUTE=10` so visitors can only review GitHub URLs and cannot spam the endpoint.
 
 ## MCP Server
 
@@ -249,14 +261,17 @@ src/repo_review_agent/
   cli.py        # Command-line interface
   function_agent.py # OpenAI function-calling agent
   github.py     # GitHub issues and PR comments
+  i18n.py       # English and Simplified Chinese report localization
   llm.py        # Optional OpenAI, OpenRouter, and Ollama AI review layer
   mcp_server.py # MCP tools for AI coding assistants
   models.py     # Structured report data models
   report.py     # Markdown and JSON report rendering
+  security.py   # Public web API safety controls
   scanner.py    # Repository scanning and file classification
-  web.py        # FastAPI app and minimal web UI
+  web.py        # FastAPI app and React static asset serving
 tests/          # Unit tests
 .github/        # CI workflow
+deploy/         # Nginx and deployment examples
 frontend/       # React + Tailwind CSS frontend
 ```
 
