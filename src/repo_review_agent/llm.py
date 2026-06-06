@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import replace
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -29,7 +30,7 @@ def add_ai_review(
     model: str | None = None,
     language: str | None = None,
     timeout: float = 60,
-    max_output_tokens: int = 900,
+    max_output_tokens: int = 1_800,
     ollama_url: str | None = None,
 ) -> ReviewReport:
     provider = provider.lower()
@@ -61,13 +62,15 @@ def add_ai_review(
     else:
         raise AIProviderError(f"Unsupported AI provider: {provider}")
 
+    summary = normalize_ai_review_summary(summary, language=language)
+
     return replace(
         report,
         ai_review=AIReview(
             provider=provider,
             model=resolved_model,
             status="generated",
-            summary=summary.strip(),
+            summary=summary,
         ),
     )
 
@@ -128,15 +131,31 @@ def build_review_prompt(report: ReviewReport, *, language: str | None = None) ->
         "You are a senior software engineer reviewing a GitHub repository for a hiring portfolio.\n"
         "Use the structured analysis below. Do not invent files, frameworks, or risks that are not supported by the data.\n"
         f"Write the entire response in {language_display_name(language)}.\n"
-        "Return concise Markdown with exactly these sections:\n"
+        "Return detailed Markdown with exactly these sections:\n"
         f"{sections}\n\n"
         "Rules:\n"
-        "- Keep the tone practical and specific.\n"
-        "- Mention evidence from the findings when discussing risks.\n"
-        "- If there are no major risks, say so and suggest meaningful next improvements.\n"
-        "- The Resume Pitch section should be 2-3 bullets suitable for a resume or interview.\n\n"
+        "- Keep the tone practical, specific, and evidence-bound.\n"
+        "- Do not add any resume, hiring pitch, portfolio pitch, or self-promotion section.\n"
+        "- In the architecture summary, explain the likely project purpose, main components, data flow, and notable framework/tooling signals.\n"
+        "- In the risk section, discuss each important finding with evidence, potential impact, and severity context.\n"
+        "- In the project highlights section, summarize the repository's strongest technical qualities and differentiators, backed by scan evidence.\n"
+        "- If there are no major risks, say so, but still explain residual risks and what was not covered by the scan.\n"
+        "- In the next steps section, provide prioritized recommendations with concrete implementation guidance.\n"
+        "- Use short paragraphs and bullets. Aim for roughly 600-900 words when enough evidence is available.\n\n"
         f"Structured repository analysis:\n```json\n{review_json}\n```"
     )
+
+
+def normalize_ai_review_summary(summary: str, *, language: str | None = None) -> str:
+    language = normalize_report_language(language)
+    replacement = "## 项目亮点" if language == "zh-CN" else "## Project Highlights"
+    normalized = re.sub(
+        r"^(?:#{1,6}\s*)?(?:简历亮点|Resume Pitch)\s*[:：]?\s*$",
+        replacement,
+        summary.strip(),
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    return normalized
 
 
 def generate_with_openai(

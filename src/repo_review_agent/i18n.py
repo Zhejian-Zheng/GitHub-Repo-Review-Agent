@@ -16,14 +16,14 @@ AI_SECTION_HEADINGS = {
     "en": [
         "## AI Architecture Summary",
         "## Top Risks",
+        "## Project Highlights",
         "## Recommended Next Steps",
-        "## Resume Pitch",
     ],
     "zh-CN": [
         "## AI 架构总结",
         "## 主要风险",
+        "## 项目亮点",
         "## 推荐下一步",
-        "## 简历亮点",
     ],
 }
 

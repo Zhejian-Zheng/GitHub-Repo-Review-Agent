@@ -37,3 +37,6 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      - name: Build Docker image
+        run: docker build -t repo-review-agent:ci .

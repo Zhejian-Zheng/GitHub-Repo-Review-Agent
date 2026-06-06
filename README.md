@@ -2,7 +2,7 @@
 
 A lightweight repository review agent that analyzes project structure, dependency files, source code, tests, CI configuration, and security hygiene to generate architecture summaries, risk reports, and actionable GitHub issue suggestions.
 
-The MVP is intentionally small and reproducible: it runs without an LLM API key, produces structured JSON, and renders a Markdown report. When enabled, the optional AI layer turns the deterministic scan into a concise architecture summary, risk explanation, next-step plan, and resume-ready project pitch.
+The MVP is intentionally small and reproducible: it runs without an LLM API key, produces structured JSON, and renders a Markdown report. When enabled, the optional AI layer turns the deterministic scan into a detailed architecture summary, risk explanation, project highlights, and next-step plan.
 
 ## Features
 
@@ -18,6 +18,27 @@ The MVP is intentionally small and reproducible: it runs without an LLM API key,
 - Provides optional Docker, FastAPI, and MCP server entry points.
 - Includes production deployment examples for Docker Compose, Nginx, HTTPS, and public demo controls.
 - Includes unit tests and a GitHub Actions workflow.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    User["User"] --> UI["React + Tailwind Web UI"]
+    UI --> API["FastAPI /review API"]
+    API --> Agent["RepoReviewAgent"]
+    Agent --> Scan["scan_repository tool"]
+    Agent --> Inspect["inspect_file tool"]
+    Agent --> Analyze["analyze_repository tool"]
+    Analyze --> Report["Markdown + JSON report"]
+    Agent --> LLM["AI review synthesis"]
+    LLM --> Providers["OpenAI / OpenRouter / Ollama"]
+    API --> Report
+    Report --> UI
+    MCP["MCP Server"] --> Agent
+    GitHub["GitHub Issues / PR Comments"] --> Report
+```
+
+The web UI also includes a static demo mode, so the frontend can be shown on static hosting such as GitHub Pages even when the FastAPI backend is not deployed.
 
 ## Quick Start
 
@@ -181,6 +202,21 @@ repo-review-web
 
 The web UI is built with React, Vite, and Tailwind CSS. It lets users enter a GitHub repository URL, choose the report language, generate a Markdown report, then copy, download, or close the generated report.
 
+For static hosting demos, use the `Load Demo` button in the frontend. It renders a built-in sample report without calling the backend, which is useful for GitHub Pages or portfolio previews.
+
+## GitHub Pages Static Demo
+
+This repository includes a GitHub Pages workflow that deploys the React frontend as a static portfolio demo. The static demo can show the built-in sample report through `Load Demo`, but live repository analysis still requires the FastAPI backend.
+
+To enable it:
+
+1. Push the repository to GitHub.
+2. Open `Settings -> Pages`.
+3. Set the source to `GitHub Actions`.
+4. Run the `GitHub Pages Demo` workflow or push to `main`.
+
+The workflow builds `frontend/dist` with the correct GitHub Pages base path.
+
 Run the React frontend in development mode:
 
 ```bash
@@ -281,6 +317,22 @@ frontend/       # React + Tailwind CSS frontend
 - Implemented a custom tool-calling agent loop and an OpenAI function-calling agent for repository scanning, file inspection, risk classification, report generation, and optional LLM-based review synthesis.
 - Added security checks for secret-like values and project hygiene checks for tests, CI, dependency manifests, and licensing.
 - Integrated GitHub issue dry-runs, issue creation, PR comments, Docker, FastAPI, and MCP tools while keeping the base CLI offline-friendly.
+
+## Interview Pitch
+
+Short version:
+
+```text
+I built a full-stack AI repository review agent. It scans a GitHub repository, runs deterministic project hygiene and security checks, lets an agent call tools such as scan_repository and inspect_file, optionally asks an LLM to synthesize the review, and returns a Markdown/JSON report through a React + FastAPI web app.
+```
+
+Resume bullets:
+
+- Built a full-stack AI developer tool with React, Tailwind CSS, FastAPI, Docker, and GitHub Actions.
+- Implemented a traceable custom Agent loop and an OpenAI Function Calling agent for repository scanning, file inspection, risk analysis, and report generation.
+- Integrated OpenAI, OpenRouter, and local Ollama providers behind a lightweight provider layer with multilingual report generation.
+- Exposed repository review workflows as MCP tools for AI coding assistant integration.
+- Added production-minded controls including rate limiting, GitHub-only public demo mode, Docker Compose deployment, and Nginx HTTPS examples.
 
 ## Roadmap
 

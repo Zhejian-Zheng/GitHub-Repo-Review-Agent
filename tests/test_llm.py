@@ -6,6 +6,7 @@ from repo_review_agent.llm import (
     build_review_prompt,
     extract_openai_text,
     extract_openrouter_text,
+    normalize_ai_review_summary,
     resolve_model,
 )
 from repo_review_agent.models import Finding, ReviewReport
@@ -51,7 +52,11 @@ class LLMTests(unittest.TestCase):
 
         self.assertIn("Simplified Chinese", prompt)
         self.assertIn("## AI 架构总结", prompt)
-        self.assertIn("## 简历亮点", prompt)
+        self.assertIn("## 项目亮点", prompt)
+        self.assertNotIn("## 简历亮点", prompt)
+        self.assertIn("project highlights section", prompt)
+        self.assertIn("prioritized recommendations", prompt)
+        self.assertIn("Do not add any resume", prompt)
 
     def test_extract_openai_text_handles_output_text(self) -> None:
         text = extract_openai_text({"output_text": "hello"})
@@ -92,6 +97,30 @@ class LLMTests(unittest.TestCase):
 
     def test_resolve_model_supports_openrouter_default(self) -> None:
         self.assertEqual(resolve_model("openrouter", None), "openrouter/auto")
+
+    def test_normalize_ai_review_summary_renames_resume_pitch(self) -> None:
+        summary = "## AI Architecture Summary\nLooks good.\n\n## Resume Pitch\n- Old title."
+
+        normalized = normalize_ai_review_summary(summary, language="en")
+
+        self.assertIn("## Project Highlights", normalized)
+        self.assertNotIn("Resume Pitch", normalized)
+
+    def test_normalize_ai_review_summary_renames_chinese_resume_highlights(self) -> None:
+        summary = "## AI 架构总结\n不错。\n\n## 简历亮点\n- 旧标题。"
+
+        normalized = normalize_ai_review_summary(summary, language="zh-CN")
+
+        self.assertIn("## 项目亮点", normalized)
+        self.assertNotIn("简历亮点", normalized)
+
+    def test_normalize_ai_review_summary_renames_bare_chinese_resume_heading(self) -> None:
+        summary = "AI 架构总结\n不错。\n\n简历亮点\n*\n*\n* 多语言开发经验。"
+
+        normalized = normalize_ai_review_summary(summary, language="zh-CN")
+
+        self.assertIn("## 项目亮点", normalized)
+        self.assertNotIn("简历亮点", normalized)
 
     @patch("repo_review_agent.llm.generate_with_ollama")
     def test_add_ai_review_attaches_provider_output(self, mock_generate) -> None:

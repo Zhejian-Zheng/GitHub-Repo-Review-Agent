@@ -5,14 +5,14 @@
 @layer base {
   :root {
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #f6f8fb;
+    background: #ffffff;
     color: #172033;
   }
 
   body {
     margin: 0;
     min-width: 320px;
-    background: #f6f8fb;
+    background: #ffffff;
   }
 
   button,
@@ -23,6 +23,264 @@
 }
 
 @layer components {
+  .chat-home {
+    min-height: 100vh;
+    background: #ffffff;
+  }
+
+  .chat-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 34px 38px 0;
+  }
+
+  .brand-menu {
+    display: inline-flex;
+    min-height: 48px;
+    align-items: center;
+    gap: 10px;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: #0b0b0d;
+    font-size: 38px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0;
+  }
+
+  .brand-menu svg {
+    color: #777a80;
+  }
+
+  .top-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .model-select,
+  .language-select {
+    position: relative;
+    display: inline-flex;
+    min-height: 38px;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid #e3e5e8;
+    background: #ffffff;
+    color: #202124;
+  }
+
+  .model-select select,
+  .language-select select {
+    min-height: 38px;
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    outline: none;
+  }
+
+  .model-select select {
+    padding: 0 34px 0 16px;
+    font-size: 15px;
+    font-weight: 650;
+  }
+
+  .language-select select {
+    padding: 0 30px 0 14px;
+    font-size: 14px;
+    font-weight: 650;
+  }
+
+  .model-select svg,
+  .language-select svg {
+    pointer-events: none;
+    position: absolute;
+    right: 12px;
+    color: #6b7280;
+  }
+
+  .language-toggle {
+    display: inline-flex;
+    min-height: 42px;
+    align-items: center;
+    overflow: hidden;
+    border: 1px solid #d9dde3;
+    border-radius: 999px;
+    background: #ffffff;
+    padding: 2px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  }
+
+  .language-toggle button {
+    min-width: 58px;
+    min-height: 36px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #6b7280;
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    transition: background 160ms ease, color 160ms ease;
+  }
+
+  .language-toggle button.active {
+    background: #050505;
+    color: #ffffff;
+  }
+
+  .language-toggle button:not(.active):hover {
+    background: #f3f4f6;
+    color: #202124;
+  }
+
+  .prompt-stage {
+    display: flex;
+    min-height: calc(100vh - 82px);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 36px 24px 140px;
+  }
+
+  .prompt-copy {
+    margin-bottom: 92px;
+    text-align: center;
+  }
+
+  .prompt-copy h1 {
+    margin: 0;
+    color: #111113;
+    font-size: 56px;
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: 0;
+  }
+
+  .prompt-copy p {
+    margin: 16px 0 0;
+    color: #6e7178;
+    font-size: 20px;
+    line-height: 1.4;
+    letter-spacing: 0;
+  }
+
+  .prompt-bar {
+    display: flex;
+    width: min(100%, 1280px);
+    min-height: 86px;
+    align-items: center;
+    gap: 18px;
+    border: 1px solid #d1d4d8;
+    border-radius: 999px;
+    background: #ffffff;
+    padding: 0 18px 0 44px;
+    box-shadow: 0 20px 55px rgba(15, 23, 42, 0.12);
+  }
+
+  .repo-input {
+    min-width: 0;
+    flex: 1;
+    border: 0;
+    background: transparent;
+    color: #161719;
+    font-size: 34px;
+    line-height: 1.25;
+    outline: none;
+    letter-spacing: 0;
+  }
+
+  .repo-input::placeholder {
+    color: #8d9096;
+    opacity: 1;
+  }
+
+  .icon-button {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: 56px;
+    height: 56px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+  }
+
+  .icon-button.ghost {
+    background: transparent;
+    color: #111113;
+  }
+
+  .icon-button.ghost:hover {
+    background: #f1f2f3;
+  }
+
+  .icon-button.send {
+    background: #111113;
+    color: #ffffff;
+  }
+
+  .icon-button.send:hover {
+    background: #24262a;
+    transform: translateX(1px);
+  }
+
+  .icon-button.send:disabled {
+    cursor: wait;
+    opacity: 0.62;
+    transform: none;
+  }
+
+  .home-actions {
+    margin-top: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .demo-button {
+    display: inline-flex;
+    min-height: 38px;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #e3e5e8;
+    border-radius: 999px;
+    background: #ffffff;
+    padding: 0 14px;
+    color: #202124;
+    font-size: 14px;
+    font-weight: 650;
+  }
+
+  .demo-button:hover,
+  .model-select:hover,
+  .language-select:hover {
+    background: #f7f8f9;
+  }
+
+  .home-status {
+    margin: 16px 0 0;
+    min-height: 22px;
+    color: #7a7d84;
+    font-size: 14px;
+    line-height: 1.5;
+    letter-spacing: 0;
+  }
+
+  .report-shell {
+    margin: 0 auto;
+    max-width: 1120px;
+    padding: 0 24px 56px;
+  }
+
   .field-label {
     @apply mb-1.5 block text-sm font-bold text-ink;
   }
@@ -77,5 +335,62 @@
 
   .markdown-summary code {
     @apply rounded bg-white px-1.5 py-0.5 font-mono text-[0.92em] text-slate-800 ring-1 ring-slate-200;
+  }
+}
+
+@media (max-width: 760px) {
+  .chat-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 22px 20px 0;
+  }
+
+  .top-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .brand-menu {
+    min-height: 40px;
+    font-size: 30px;
+  }
+
+  .prompt-stage {
+    min-height: calc(100vh - 106px);
+    justify-content: flex-start;
+    padding: 118px 16px 96px;
+  }
+
+  .prompt-copy {
+    margin-bottom: 44px;
+  }
+
+  .prompt-copy h1 {
+    font-size: 36px;
+    line-height: 1.16;
+  }
+
+  .prompt-copy p {
+    margin-top: 12px;
+    font-size: 17px;
+  }
+
+  .prompt-bar {
+    min-height: 66px;
+    gap: 10px;
+    padding: 0 10px 0 12px;
+  }
+
+  .repo-input {
+    font-size: 18px;
+  }
+
+  .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .report-shell {
+    padding-inline: 12px;
   }
 }
