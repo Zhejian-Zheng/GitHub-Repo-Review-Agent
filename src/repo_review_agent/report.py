@@ -29,6 +29,7 @@ REPORT_LABELS = {
         "severity": "Severity",
         "category": "Category",
         "evidence": "Evidence",
+        "evidence_paths": "Evidence files",
         "recommendation": "Recommendation",
         "issue_backlog": "GitHub Issue Backlog",
         "no_issues": "No immediate issue suggestions.",
@@ -62,6 +63,7 @@ REPORT_LABELS = {
         "severity": "严重程度",
         "category": "类别",
         "evidence": "证据",
+        "evidence_paths": "证据文件",
         "recommendation": "建议",
         "issue_backlog": "GitHub Issue 待办",
         "no_issues": "暂无需要立即创建的 Issue 建议。",
@@ -186,5 +188,8 @@ def _render_finding(index: int, finding: Finding, labels: dict[str, str]) -> lis
         f"- {labels['evidence']}:",
     ]
     lines.extend(f"  - {item}" for item in finding.evidence)
+    if finding.evidence_paths:
+        lines.append(f"- {labels['evidence_paths']}:")
+        lines.extend(f"  - `{path}`" for path in finding.evidence_paths)
     lines.extend([f"- {labels['recommendation']}:", f"  - {finding.recommendation}", ""])
     return lines

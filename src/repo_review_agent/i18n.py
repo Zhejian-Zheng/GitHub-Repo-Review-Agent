@@ -115,6 +115,7 @@ def _localize_finding_zh(finding: Finding) -> Finding:
         category=_CATEGORY_ZH.get(finding.category, finding.category),
         evidence=[_localize_evidence_zh(item) for item in finding.evidence],
         recommendation=_RECOMMENDATION_ZH.get(finding.recommendation, finding.recommendation),
+        evidence_paths=finding.evidence_paths,
     )
 
 

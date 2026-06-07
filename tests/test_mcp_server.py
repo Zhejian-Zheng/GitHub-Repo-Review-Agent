@@ -19,6 +19,7 @@ class MCPServerHelpersTests(unittest.TestCase):
                         "category": "testing",
                         "evidence": ["No tests found."],
                         "recommendation": "Add unit tests.",
+                        "evidence_paths": ["src/app.py"],
                     }
                 ],
             }
@@ -26,6 +27,7 @@ class MCPServerHelpersTests(unittest.TestCase):
 
         self.assertEqual(len(drafts), 1)
         self.assertEqual(drafts[0].title, "[MEDIUM] Add tests")
+        self.assertIn("`src/app.py`", drafts[0].body)
 
 
 if __name__ == "__main__":

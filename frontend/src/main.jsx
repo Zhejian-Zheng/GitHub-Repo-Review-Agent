@@ -75,6 +75,7 @@ const reportCopy = {
     model: "Model",
     status: "Status",
     evidence: "Evidence",
+    evidencePaths: "Evidence files",
     recommendation: "Recommendation",
     issueBacklog: "GitHub Issue Backlog",
     noIssues: "No immediate issue suggestions.",
@@ -118,6 +119,7 @@ const reportCopy = {
     model: "模型",
     status: "状态",
     evidence: "证据",
+    evidencePaths: "证据文件",
     recommendation: "建议",
     issueBacklog: "GitHub Issue 待办",
     noIssues: "暂无需要立即创建的 Issue 建议。",
@@ -293,6 +295,7 @@ function buildDemoReport(language) {
         evidence: isChinese
           ? ["项目已经具备 Web UI 和部署配置，但 README 中还没有真实截图。"]
           : ["The project includes a Web UI and deployment config, but the README does not yet show real screenshots."],
+        evidence_paths: ["README.md", ".github/workflows/pages.yml"],
         recommendation: isChinese
           ? "部署后补充 Web UI 截图、示例报告截图和线上地址。"
           : "After deployment, add Web UI screenshots, report screenshots, and the live demo URL."
@@ -304,6 +307,7 @@ function buildDemoReport(language) {
         evidence: isChinese
           ? ["公开部署会接受用户输入的 GitHub URL，并调用后端分析流程。"]
           : ["A public deployment accepts user-provided GitHub URLs and runs backend analysis."],
+        evidence_paths: ["src/repo_review_agent/web.py"],
         recommendation: isChinese
           ? "设置 REPO_REVIEW_ALLOW_LOCAL_TARGETS=false，并启用请求频率限制。"
           : "Set REPO_REVIEW_ALLOW_LOCAL_TARGETS=false and enable rate limiting."
@@ -877,6 +881,18 @@ function FindingCard({ finding, index, copy }) {
               <li key={item}>{item}</li>
             ))}
           </ul>
+          {(finding.evidence_paths ?? []).length ? (
+            <div className="mt-3">
+              <strong className="mb-2 block text-sm">{copy.evidencePaths}</strong>
+              <ul className="report-list text-sm">
+                {finding.evidence_paths.map((path) => (
+                  <li key={path}>
+                    <code>{path}</code>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
         <div className="rounded-md bg-white/75 p-3">
           <strong className="mb-2 block text-sm">{copy.recommendation}</strong>
@@ -1064,6 +1080,10 @@ function renderStaticMarkdown(report, language) {
       `- ${copy.evidence}:`
     );
     (finding.evidence ?? []).forEach((item) => lines.push(`  - ${item}`));
+    if ((finding.evidence_paths ?? []).length) {
+      lines.push(`- ${copy.evidencePaths}:`);
+      finding.evidence_paths.forEach((path) => lines.push(`  - \`${path}\``));
+    }
     lines.push(`- ${copy.recommendation}:`, `  - ${finding.recommendation}`, "");
   });
 

@@ -26,6 +26,17 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("src/app.py", snapshot.source_files)
         self.assertEqual(snapshot.language_counts["Python"], 1)
 
+    def test_scan_repository_records_skipped_file_paths(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            (root / "large.py").write_text("x" * 20, encoding="utf-8")
+
+            snapshot = scan_repository(root, max_file_size=10)
+
+        self.assertEqual(snapshot.skipped_files, 1)
+        self.assertEqual(snapshot.skipped_file_paths, ["large.py"])
+
 
 if __name__ == "__main__":
     unittest.main()

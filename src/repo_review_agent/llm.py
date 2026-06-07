@@ -136,6 +136,7 @@ def build_review_prompt(report: ReviewReport, *, language: str | None = None) ->
                 "severity": finding.severity,
                 "category": finding.category,
                 "evidence": finding.evidence,
+                "evidence_paths": finding.evidence_paths,
                 "recommendation": finding.recommendation,
             }
             for finding in report.findings
@@ -153,6 +154,7 @@ def build_review_prompt(report: ReviewReport, *, language: str | None = None) ->
         f"{schema}\n\n"
         "Rules:\n"
         "- Keep the tone practical, specific, and evidence-bound.\n"
+        "- When discussing a finding, use evidence_paths to reference the relevant files.\n"
         "- Do not add any resume, hiring pitch, portfolio pitch, or self-promotion section.\n"
         "- Use exactly these top-level keys: architecture_summary, risks, project_highlights, next_steps.\n"
         "- Each value must be an array of non-empty plain-text strings, not nested Markdown.\n"

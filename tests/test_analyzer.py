@@ -18,8 +18,11 @@ class AnalyzerTests(unittest.TestCase):
             report = analyze_repository(root)
 
         titles = {finding.title for finding in report.findings}
+        paths_by_title = {finding.title: finding.evidence_paths for finding in report.findings}
         self.assertIn("Add automated tests for the core behavior", titles)
         self.assertIn("Add a CI workflow", titles)
+        self.assertEqual(paths_by_title["Add automated tests for the core behavior"], ["app.py"])
+        self.assertIn("app.py", paths_by_title["Add a CI workflow"])
 
     def test_analyzer_detects_secret_like_values(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -34,6 +37,7 @@ class AnalyzerTests(unittest.TestCase):
 
         self.assertEqual(report.findings[0].title, "Remove possible hard-coded secrets")
         self.assertEqual(report.findings[0].severity, "high")
+        self.assertEqual(report.findings[0].evidence_paths, ["app.py"])
 
     def test_analyzer_ignores_secret_placeholders(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -61,7 +65,9 @@ class AnalyzerTests(unittest.TestCase):
             report = analyze_repository(root)
 
         titles = {finding.title for finding in report.findings}
+        paths_by_title = {finding.title: finding.evidence_paths for finding in report.findings}
         self.assertIn("Expand README with setup and example output", titles)
+        self.assertEqual(paths_by_title["Expand README with setup and example output"], ["README.md"])
 
     def test_analyzer_reports_missing_javascript_lockfile(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -79,7 +85,9 @@ class AnalyzerTests(unittest.TestCase):
             report = analyze_repository(root)
 
         titles = {finding.title for finding in report.findings}
+        paths_by_title = {finding.title: finding.evidence_paths for finding in report.findings}
         self.assertIn("Commit a JavaScript package lockfile", titles)
+        self.assertEqual(paths_by_title["Commit a JavaScript package lockfile"], ["package.json"])
 
     def test_analyzer_reports_ci_without_test_or_frontend_build(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -105,8 +113,12 @@ class AnalyzerTests(unittest.TestCase):
             report = analyze_repository(root)
 
         titles = {finding.title for finding in report.findings}
+        paths_by_title = {finding.title: finding.evidence_paths for finding in report.findings}
         self.assertIn("Run automated tests in CI", titles)
         self.assertIn("Build frontend assets in CI", titles)
+        self.assertEqual(paths_by_title["Run automated tests in CI"], [".github/workflows/ci.yml"])
+        self.assertIn(".github/workflows/ci.yml", paths_by_title["Build frontend assets in CI"])
+        self.assertIn("package.json", paths_by_title["Build frontend assets in CI"])
 
     def test_analyzer_reports_low_test_to_source_ratio(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -132,7 +144,9 @@ class AnalyzerTests(unittest.TestCase):
             report = analyze_repository(root)
 
         titles = {finding.title for finding in report.findings}
+        paths_by_title = {finding.title: finding.evidence_paths for finding in report.findings}
         self.assertIn("Expand test coverage across source modules", titles)
+        self.assertIn("tests/test_one.py", paths_by_title["Expand test coverage across source modules"])
 
     def test_analyzer_reports_dockerfile_without_non_root_user(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -157,7 +171,35 @@ class AnalyzerTests(unittest.TestCase):
             report = analyze_repository(root)
 
         titles = {finding.title for finding in report.findings}
+        paths_by_title = {finding.title: finding.evidence_paths for finding in report.findings}
         self.assertIn("Harden Docker image with a non-root runtime user", titles)
+        self.assertEqual(paths_by_title["Harden Docker image with a non-root runtime user"], ["Dockerfile"])
+
+    def test_analyzer_attaches_evidence_paths_to_summary_finding(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github" / "workflows").mkdir(parents=True)
+            (root / "src").mkdir()
+            (root / "tests").mkdir()
+            (root / "README.md").write_text(
+                "# Example\n\n## Usage\nRun python -m unittest.\n\n## Demo\nExample report output.\n",
+                encoding="utf-8",
+            )
+            (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
+            (root / ".gitignore").write_text(".venv\n", encoding="utf-8")
+            (root / "pyproject.toml").write_text("[project]\nname = 'example'\n", encoding="utf-8")
+            (root / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (root / "tests" / "test_app.py").write_text("def test_app(): pass\n", encoding="utf-8")
+            (root / ".github" / "workflows" / "ci.yml").write_text(
+                "name: CI\nrun: python -m unittest discover\n",
+                encoding="utf-8",
+            )
+
+            report = analyze_repository(root)
+
+        self.assertEqual(report.findings[0].title, "No major project hygiene gaps detected")
+        self.assertTrue(report.findings[0].evidence_paths)
+        self.assertIn("README.md", report.findings[0].evidence_paths)
 
 
 if __name__ == "__main__":

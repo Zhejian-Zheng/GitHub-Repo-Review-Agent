@@ -99,6 +99,7 @@ def issue_drafts_from_report_dict(report_dict: dict[str, Any]):
             category=finding["category"],
             evidence=list(finding.get("evidence", [])),
             recommendation=finding["recommendation"],
+            evidence_paths=list(finding.get("evidence_paths", [])),
         )
         for finding in report_dict.get("findings", [])
     ]

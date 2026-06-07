@@ -36,6 +36,7 @@ def sample_report() -> ReviewReport:
                 category="testing",
                 evidence=["2 source file(s) found, but no tests were detected."],
                 recommendation="Add small tests around the scanner and analyzer.",
+                evidence_paths=["src/app.py"],
             )
         ],
     )
@@ -70,6 +71,8 @@ class LLMTests(unittest.TestCase):
         self.assertIn("Return only a valid JSON object", prompt)
         self.assertIn("architecture_summary", prompt)
         self.assertIn("project_highlights", prompt)
+        self.assertIn('"evidence_paths": [', prompt)
+        self.assertIn('"src/app.py"', prompt)
 
     def test_build_review_prompt_supports_chinese(self) -> None:
         prompt = build_review_prompt(sample_report(), language="zh-CN")

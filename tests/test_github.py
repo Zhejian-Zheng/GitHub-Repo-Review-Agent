@@ -27,6 +27,7 @@ def sample_report() -> ReviewReport:
                 category="delivery",
                 evidence=["No workflow file was found."],
                 recommendation="Run tests on pull requests using GitHub Actions.",
+                evidence_paths=["src/app.py"],
             ),
             Finding(
                 title="No major project hygiene gaps detected",
@@ -34,6 +35,7 @@ def sample_report() -> ReviewReport:
                 category="summary",
                 evidence=["README was present."],
                 recommendation="Continue improving coverage.",
+                evidence_paths=["README.md"],
             ),
         ],
     )
@@ -52,6 +54,8 @@ class GitHubIntegrationTests(unittest.TestCase):
         self.assertEqual(len(drafts), 1)
         self.assertEqual(drafts[0].title, "[MEDIUM] Add a CI workflow")
         self.assertIn("No workflow file was found.", drafts[0].body)
+        self.assertIn("Evidence Files", drafts[0].body)
+        self.assertIn("`src/app.py`", drafts[0].body)
 
     def test_issue_dry_run_returns_drafts(self) -> None:
         result = apply_github_issue_mode(
@@ -74,6 +78,7 @@ class GitHubIntegrationTests(unittest.TestCase):
         self.assertEqual(result["pr_number"], 12)
         self.assertIn("Repository Review Agent", result["body"])
         self.assertIn("Add a CI workflow", result["body"])
+        self.assertIn("Files: `src/app.py`.", result["body"])
 
     def test_build_pr_comment_body_reports_no_actionable_findings(self) -> None:
         report = ReviewReport(
@@ -89,6 +94,7 @@ class GitHubIntegrationTests(unittest.TestCase):
                     category="summary",
                     evidence=["README was present."],
                     recommendation="Continue improving coverage.",
+                    evidence_paths=["README.md"],
                 )
             ],
         )

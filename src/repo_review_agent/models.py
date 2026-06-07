@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -27,6 +27,7 @@ class RepositorySnapshot:
     language_counts: dict[str, int]
     total_size_bytes: int
     skipped_files: int
+    skipped_file_paths: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class Finding:
     category: str
     evidence: list[str]
     recommendation: str
+    evidence_paths: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

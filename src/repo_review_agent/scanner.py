@@ -107,19 +107,22 @@ def scan_repository(
     root = root.resolve()
     files: list[RepoFile] = []
     skipped_files = 0
+    skipped_file_paths: list[str] = []
 
     for path in _iter_files(root):
         try:
             stat = path.stat()
         except OSError:
             skipped_files += 1
+            skipped_file_paths.append(_relative_path(root, path))
             continue
 
+        rel_path = _relative_path(root, path)
         if stat.st_size > max_file_size:
             skipped_files += 1
+            skipped_file_paths.append(rel_path)
             continue
 
-        rel_path = path.relative_to(root).as_posix()
         suffix = path.suffix.lower()
         language = LANGUAGE_BY_SUFFIX.get(suffix)
         kind = _classify_file(rel_path, path.name, language)
@@ -135,6 +138,7 @@ def scan_repository(
 
         if len(files) >= max_files:
             skipped_files += 1
+            skipped_file_paths.append(rel_path)
             break
 
     language_counts = Counter(
@@ -162,6 +166,7 @@ def scan_repository(
         language_counts=dict(language_counts),
         total_size_bytes=sum(file.size_bytes for file in files),
         skipped_files=skipped_files,
+        skipped_file_paths=skipped_file_paths,
     )
 
 
@@ -172,6 +177,13 @@ def _iter_files(root: Path):
         if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):
             continue
         yield path
+
+
+def _relative_path(root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _classify_file(rel_path: str, name: str, language: str | None) -> str:

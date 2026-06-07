@@ -27,6 +27,7 @@ class ReportRenderingTests(unittest.TestCase):
                     category="testing",
                     evidence=["2 source file(s) found, but no tests were detected."],
                     recommendation="Add small tests around the scanner and analyzer so regressions are caught before release.",
+                    evidence_paths=["src/app.py"],
                 )
             ],
         )
@@ -38,6 +39,8 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("检测到主要源码语言", markdown)
         self.assertIn("为核心行为添加自动化测试", markdown)
         self.assertIn("## GitHub Issue 待办", markdown)
+        self.assertIn("证据文件", markdown)
+        self.assertIn("`src/app.py`", markdown)
 
 
 if __name__ == "__main__":
