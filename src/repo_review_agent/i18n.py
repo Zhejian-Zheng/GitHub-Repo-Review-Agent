@@ -123,6 +123,27 @@ def _localize_evidence_zh(text: str) -> str:
     if match:
         return f"发现 {match.group(1)} 个源码文件，但未检测到测试文件。"
 
+    match = re.match(r"^Only (\d+) test file\(s\) were found for (\d+) source file\(s\)\.$", text)
+    if match:
+        return f"仅发现 {match.group(1)} 个测试文件，对应 {match.group(2)} 个源码文件。"
+
+    match = re.match(r"^README\.md is missing (.+)\.$", text)
+    if match:
+        missing = (
+            match.group(1)
+            .replace("setup or usage instructions", "安装或使用说明")
+            .replace("example output, demo, or screenshots", "示例输出、演示或截图")
+        )
+        return f"README.md 缺少 {missing}。"
+
+    match = re.match(r"^CI files were found \((.+)\), but no common test command was detected\.$", text)
+    if match:
+        return f"已发现 CI 文件（{match.group(1)}），但未检测到常见测试命令。"
+
+    match = re.match(r"^(.+) does not set a non-root USER before runtime\.$", text)
+    if match:
+        return f"{match.group(1)} 未在运行阶段前设置非 root USER。"
+
     match = re.match(r"^(\d+) file\(s\) were skipped because of limits or read errors\.$", text)
     if match:
         return f"有 {match.group(1)} 个文件因扫描限制或读取错误被跳过。"
@@ -196,6 +217,12 @@ _FINDING_TITLE_ZH = {
     "Review skipped files": "检查被跳过的文件",
     "Remove possible hard-coded secrets": "移除可能硬编码的敏感密钥",
     "No major project hygiene gaps detected": "未检测到主要项目规范问题",
+    "Expand README with setup and example output": "补充 README 的安装说明和示例输出",
+    "Expand test coverage across source modules": "扩大源码模块的测试覆盖",
+    "Run automated tests in CI": "在 CI 中运行自动化测试",
+    "Build frontend assets in CI": "在 CI 中构建前端产物",
+    "Commit a JavaScript package lockfile": "提交 JavaScript 包管理锁文件",
+    "Harden Docker image with a non-root runtime user": "使用非 root 运行用户加固 Docker 镜像",
 }
 
 _CATEGORY_ZH = {
@@ -207,6 +234,7 @@ _CATEGORY_ZH = {
     "analysis coverage": "分析覆盖率",
     "security": "安全",
     "summary": "总结",
+    "dependency hygiene": "依赖规范",
 }
 
 _EVIDENCE_ZH = {
@@ -216,6 +244,8 @@ _EVIDENCE_ZH = {
     "No workflow file was found under .github/workflows or other common CI locations.": "未在 .github/workflows 或其他常见 CI 位置发现工作流文件。",
     "No package manager manifest was detected.": "未检测到包管理器依赖清单。",
     "README, license, dependency metadata, tests, and CI signals were present in the scan.": "扫描中已发现 README、许可证、依赖元数据、测试和 CI 信号。",
+    "package.json was found without package-lock.json, pnpm-lock.yaml, yarn.lock, or bun.lock.": "发现 package.json，但未发现 package-lock.json、pnpm-lock.yaml、yarn.lock 或 bun.lock。",
+    "A JavaScript frontend package was detected, but CI does not appear to run a frontend build command.": "检测到 JavaScript 前端包，但 CI 中似乎没有运行前端构建命令。",
 }
 
 _RECOMMENDATION_ZH = {
@@ -228,6 +258,12 @@ _RECOMMENDATION_ZH = {
     "Increase scan limits or inspect skipped files manually if they are relevant to the review.": "如果这些文件与评审相关，提升扫描限制或手动检查被跳过的文件。",
     "Move credentials into environment variables or a secret manager, then rotate exposed values.": "将凭证移入环境变量或密钥管理服务，并轮换已经暴露的值。",
     "Continue with deeper checks such as dependency vulnerability scanning and coverage thresholds.": "继续加入更深入的检查，例如依赖漏洞扫描和测试覆盖率阈值。",
+    "Add installation steps, run commands, and a small report/demo screenshot so reviewers can understand the project quickly.": "添加安装步骤、运行命令和小型报告或演示截图，让评审者能快速理解项目。",
+    "Add focused tests for the main source modules and track coverage thresholds in CI.": "为主要源码模块添加有针对性的测试，并在 CI 中跟踪覆盖率阈值。",
+    "Add language-specific test commands to CI so regressions are caught before merge.": "在 CI 中添加对应语言的测试命令，在合并前捕获回归问题。",
+    "Run npm run build, pnpm build, or the equivalent frontend build command in CI.": "在 CI 中运行 npm run build、pnpm build 或等价的前端构建命令。",
+    "Commit the package manager lockfile so dependency resolution is reproducible in CI and deployments.": "提交包管理器锁文件，确保 CI 和部署环境中的依赖解析可复现。",
+    "Create and switch to an application user in the final Docker stage to reduce container privilege risk.": "在最终 Docker 阶段创建并切换到应用用户，降低容器权限风险。",
 }
 
 _AI_ERROR_ZH = {

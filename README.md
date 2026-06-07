@@ -8,7 +8,7 @@ The MVP is intentionally small and reproducible: it runs without an LLM API key,
 
 - Scans local repositories or public GitHub URLs.
 - Detects source languages, dependency manifests, test files, docs, CI workflows, and common framework signals.
-- Flags project hygiene risks such as missing tests, missing CI, missing license, missing dependency manifests, and possible hard-coded secrets.
+- Flags project hygiene risks such as missing tests, shallow test breadth, missing CI, weak CI checks, missing lockfiles, incomplete README guidance, Docker runtime hardening gaps, and possible hard-coded secrets.
 - Generates a Markdown review report and optional JSON output.
 - Supports English and Simplified Chinese report output.
 - Includes a custom `RepoReviewAgent` that uses a traceable tool-calling loop.

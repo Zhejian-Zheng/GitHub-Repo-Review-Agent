@@ -27,6 +27,75 @@ PLACEHOLDER_SECRET_TERMS = {
     "replace-this",
 }
 
+JS_LOCKFILE_NAMES = {
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+}
+
+CI_TEST_TERMS = {
+    "pytest",
+    "python -m unittest",
+    "unittest discover",
+    "npm test",
+    "npm run test",
+    "pnpm test",
+    "yarn test",
+    "vitest",
+    "jest",
+    "go test",
+    "cargo test",
+    "mvn test",
+    "gradle test",
+}
+
+CI_BUILD_TERMS = {
+    "npm run build",
+    "pnpm build",
+    "yarn build",
+    "vite build",
+    "python -m build",
+    "docker build",
+    "go build",
+    "cargo build",
+    "mvn package",
+    "gradle build",
+}
+
+README_SETUP_TERMS = {
+    "install",
+    "setup",
+    "getting started",
+    "quick start",
+    "usage",
+    "run",
+    "docker",
+    "npm",
+    "pip",
+    "poetry",
+    "uv",
+    "安装",
+    "启动",
+    "使用",
+}
+
+README_OUTPUT_TERMS = {
+    "demo",
+    "example",
+    "sample",
+    "output",
+    "report",
+    "screenshot",
+    "演示",
+    "示例",
+    "输出",
+    "报告",
+    "截图",
+}
+
 
 def analyze_repository(
     root: Path,
@@ -150,6 +219,7 @@ def detect_framework_signals(
 def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
     findings: list[Finding] = []
     file_paths = {file.path.lower() for file in snapshot.files}
+    dependency_paths = {path.lower() for path in snapshot.dependency_files}
 
     if "readme.md" not in file_paths:
         findings.append(
@@ -161,6 +231,9 @@ def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
                 recommendation="Add a concise README that explains the project goal, setup steps, commands, and sample output.",
             )
         )
+    else:
+        readme_findings = build_readme_quality_findings(root)
+        findings.extend(readme_findings)
 
     if not any(path in {"license", "license.md"} for path in file_paths):
         findings.append(
@@ -194,6 +267,20 @@ def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
                 recommendation="Add small tests around the scanner and analyzer so regressions are caught before release.",
             )
         )
+    elif len(snapshot.source_files) >= 4 and snapshot.test_files:
+        test_ratio = len(snapshot.test_files) / len(snapshot.source_files)
+        if test_ratio < 0.25:
+            findings.append(
+                Finding(
+                    title="Expand test coverage across source modules",
+                    severity="medium",
+                    category="testing",
+                    evidence=[
+                        f"Only {len(snapshot.test_files)} test file(s) were found for {len(snapshot.source_files)} source file(s)."
+                    ],
+                    recommendation="Add focused tests for the main source modules and track coverage thresholds in CI.",
+                )
+            )
 
     if snapshot.source_files and not snapshot.ci_files:
         findings.append(
@@ -205,6 +292,9 @@ def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
                 recommendation="Run tests and basic import checks on pull requests using GitHub Actions.",
             )
         )
+    elif snapshot.ci_files:
+        ci_findings = build_ci_quality_findings(snapshot, root)
+        findings.extend(ci_findings)
 
     if snapshot.source_files and not snapshot.dependency_files:
         findings.append(
@@ -216,6 +306,20 @@ def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
                 recommendation="Add pyproject.toml, package.json, go.mod, or the equivalent manifest for the stack.",
             )
         )
+
+    if _has_package_json_without_lockfile(dependency_paths, file_paths):
+        findings.append(
+            Finding(
+                title="Commit a JavaScript package lockfile",
+                severity="medium",
+                category="dependency hygiene",
+                evidence=["package.json was found without package-lock.json, pnpm-lock.yaml, yarn.lock, or bun.lock."],
+                recommendation="Commit the package manager lockfile so dependency resolution is reproducible in CI and deployments.",
+            )
+        )
+
+    docker_findings = build_docker_quality_findings(snapshot, root)
+    findings.extend(docker_findings)
 
     if snapshot.skipped_files:
         findings.append(
@@ -255,6 +359,83 @@ def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
     return findings
 
 
+def build_readme_quality_findings(root: Path) -> list[Finding]:
+    text = read_text_file(root, "README.md", limit=80_000)
+    normalized = text.lower()
+    missing: list[str] = []
+
+    if not any(term in normalized for term in README_SETUP_TERMS):
+        missing.append("setup or usage instructions")
+    if not any(term in normalized for term in README_OUTPUT_TERMS):
+        missing.append("example output, demo, or screenshots")
+
+    if not missing:
+        return []
+
+    return [
+        Finding(
+            title="Expand README with setup and example output",
+            severity="low",
+            category="documentation",
+            evidence=[f"README.md is missing {', '.join(missing)}."],
+            recommendation="Add installation steps, run commands, and a small report/demo screenshot so reviewers can understand the project quickly.",
+        )
+    ]
+
+
+def build_ci_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
+    combined_ci = "\n".join(
+        read_text_file(root, ci_file, limit=80_000).lower()
+        for ci_file in snapshot.ci_files[:8]
+    )
+    findings: list[Finding] = []
+
+    if snapshot.source_files and not any(term in combined_ci for term in CI_TEST_TERMS):
+        findings.append(
+            Finding(
+                title="Run automated tests in CI",
+                severity="medium",
+                category="delivery",
+                evidence=[f"CI files were found ({', '.join(snapshot.ci_files[:3])}), but no common test command was detected."],
+                recommendation="Add language-specific test commands to CI so regressions are caught before merge.",
+            )
+        )
+
+    if _has_frontend_package(snapshot) and not any(term in combined_ci for term in CI_BUILD_TERMS):
+        findings.append(
+            Finding(
+                title="Build frontend assets in CI",
+                severity="medium",
+                category="delivery",
+                evidence=["A JavaScript frontend package was detected, but CI does not appear to run a frontend build command."],
+                recommendation="Run npm run build, pnpm build, or the equivalent frontend build command in CI.",
+            )
+        )
+
+    return findings
+
+
+def build_docker_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    dockerfiles = [file.path for file in snapshot.files if file.path.lower().endswith("dockerfile")]
+
+    for dockerfile in dockerfiles[:3]:
+        text = read_text_file(root, dockerfile, limit=80_000)
+        if not _dockerfile_sets_non_root_user(text):
+            findings.append(
+                Finding(
+                    title="Harden Docker image with a non-root runtime user",
+                    severity="low",
+                    category="security",
+                    evidence=[f"{dockerfile} does not set a non-root USER before runtime."],
+                    recommendation="Create and switch to an application user in the final Docker stage to reduce container privilege risk.",
+                )
+            )
+            break
+
+    return findings
+
+
 def find_secret_like_values(snapshot: RepositorySnapshot, root: Path) -> list[str]:
     evidence: list[str] = []
     candidate_files = [
@@ -281,6 +462,42 @@ def find_secret_like_values(snapshot: RepositorySnapshot, root: Path) -> list[st
 def _looks_like_secret_placeholder(match_text: str) -> bool:
     normalized = match_text.lower()
     return any(term in normalized for term in PLACEHOLDER_SECRET_TERMS)
+
+
+def _has_package_json_without_lockfile(
+    dependency_paths: set[str],
+    file_paths: set[str],
+) -> bool:
+    package_dirs = {
+        str(Path(path).parent).replace("\\", "/")
+        for path in dependency_paths
+        if Path(path).name == "package.json"
+    }
+    for package_dir in package_dirs:
+        package_dir = "" if package_dir == "." else package_dir
+        for lockfile in JS_LOCKFILE_NAMES:
+            candidate = f"{package_dir}/{lockfile}" if package_dir else lockfile
+            if candidate.lower() in file_paths:
+                break
+        else:
+            return True
+    return False
+
+
+def _has_frontend_package(snapshot: RepositorySnapshot) -> bool:
+    return any(path.lower().endswith("package.json") for path in snapshot.dependency_files)
+
+
+def _dockerfile_sets_non_root_user(text: str) -> bool:
+    last_user: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = re.match(r"(?i)^USER\s+(.+)$", stripped)
+        if match:
+            last_user = match.group(1).strip().split(":", 1)[0].strip()
+    return last_user is not None and last_user not in {"0", "root"}
 
 
 def _detect_package_json(signals: dict[str, list[str]], root: Path, rel_path: str) -> None:
