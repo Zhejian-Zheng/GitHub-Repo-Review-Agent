@@ -84,7 +84,22 @@ class OpenAIFunctionCallingAgentTests(unittest.TestCase):
                 ]
             },
             {
-                "output_text": "## AI Architecture Summary\nA small repository review agent.",
+                "output_text": """
+{
+  "architecture_summary": [
+    "A small repository review agent with scanning, analysis, and report rendering."
+  ],
+  "risks": [
+    "The review depends on static signals, so runtime behavior still needs manual validation."
+  ],
+  "project_highlights": [
+    "The agent exposes a traceable tool loop and structured report output."
+  ],
+  "next_steps": [
+    "Add fixture-based golden report tests for representative repositories."
+  ]
+}
+""",
                 "output": [],
             },
         ]
@@ -102,7 +117,10 @@ class OpenAIFunctionCallingAgentTests(unittest.TestCase):
         )
         self.assertIsNotNone(report.ai_review)
         self.assertEqual(report.ai_review.provider, "openai-functions")
+        self.assertEqual(report.ai_review.status, "generated")
+        self.assertIsNotNone(report.ai_review.sections)
         self.assertIn("AI Architecture Summary", report.ai_review.summary)
+        self.assertIn("Project Highlights", report.ai_review.summary)
         self.assertEqual(mock_post_json.call_count, 5)
 
 

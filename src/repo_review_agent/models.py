@@ -45,6 +45,7 @@ class AIReview:
     status: str
     summary: str
     error: str | None = None
+    sections: dict[str, list[str]] | None = None
 
 
 @dataclass(frozen=True)

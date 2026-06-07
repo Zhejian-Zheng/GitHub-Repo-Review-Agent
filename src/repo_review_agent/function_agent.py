@@ -13,6 +13,8 @@ from .llm import (
     OPENAI_RESPONSES_URL,
     _post_json,
     extract_openai_text,
+    parse_ai_review_sections,
+    render_ai_review_sections,
     resolve_model,
 )
 from .models import AIReview, AgentStep, RepositorySnapshot, ReviewReport
@@ -141,8 +143,8 @@ class OpenAIFunctionCallingAgent:
                 "content": (
                     "Review this repository as a hiring-portfolio AI agent. "
                     "Use tools before answering. First scan the repository, inspect important files, "
-                    "run deterministic analysis, generate a report preview, then write the final review."
-                    f" Write the final review in {language_display_name(self.report_language)}."
+                    "run deterministic analysis, generate a report preview, then return structured JSON."
+                    f" Write all JSON string values in {language_display_name(self.report_language)}."
                 ),
             }
         ]
@@ -181,13 +183,33 @@ class OpenAIFunctionCallingAgent:
         if state.report is None:
             raise AIProviderError("Function-calling agent stopped before producing a report.")
 
-        ai_review = AIReview(
-            provider="openai-functions",
-            model=self.model,
-            status="generated" if final_text.strip() else "error",
-            summary=final_text.strip(),
-            error=None if final_text.strip() else "Model did not return a final text response.",
-        )
+        if final_text.strip():
+            try:
+                sections = parse_ai_review_sections(final_text, language=self.report_language)
+                summary = render_ai_review_sections(sections, language=self.report_language)
+                ai_review = AIReview(
+                    provider="openai-functions",
+                    model=self.model,
+                    status="generated",
+                    summary=summary,
+                    sections=sections,
+                )
+            except AIProviderError as exc:
+                ai_review = AIReview(
+                    provider="openai-functions",
+                    model=self.model,
+                    status="error",
+                    summary="",
+                    error=str(exc),
+                )
+        else:
+            ai_review = AIReview(
+                provider="openai-functions",
+                model=self.model,
+                status="error",
+                summary="",
+                error="Model did not return a final text response.",
+            )
         return replace(state.report, ai_review=ai_review, agent_trace=trace)
 
     def _create_response(self, input_items: list[dict[str, Any]]) -> dict:
@@ -202,10 +224,13 @@ class OpenAIFunctionCallingAgent:
                 "max_output_tokens": self.max_output_tokens,
                 "instructions": (
                     "You are a senior software engineer. Use the provided functions for repository facts. "
-                    "Do not invent files or findings. After generate_report, provide concise Markdown with "
-                    "exactly these sections: "
+                    "Do not invent files or findings. After generate_report, return only a valid JSON object "
+                    "with exactly these top-level keys: architecture_summary, risks, project_highlights, next_steps. "
+                    "Each value must be an array of non-empty plain-text strings with no Markdown headings, "
+                    "bullet markers, empty strings, or resume/self-promotion content. The backend will render "
+                    "Markdown with these sections: "
                     f"{', '.join(ai_section_headings(self.report_language))}. "
-                    f"Write the entire final answer in {language_display_name(self.report_language)}."
+                    f"Write all JSON string values in {language_display_name(self.report_language)}."
                 ),
             },
             timeout=self.timeout,

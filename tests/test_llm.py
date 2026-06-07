@@ -6,6 +6,8 @@ from repo_review_agent.llm import (
     build_review_prompt,
     extract_openai_text,
     extract_openrouter_text,
+    parse_ai_review_sections,
+    render_ai_review_sections,
     normalize_ai_review_summary,
     resolve_model,
 )
@@ -39,6 +41,25 @@ def sample_report() -> ReviewReport:
     )
 
 
+def sample_ai_review_json() -> str:
+    return """
+{
+  "architecture_summary": [
+    "This repository is a small review agent with a scanner, analyzer, and report renderer."
+  ],
+  "risks": [
+    "The scan is evidence-bound but still shallow, so dependency and runtime behavior need deeper checks."
+  ],
+  "project_highlights": [
+    "The project combines deterministic findings with optional AI synthesis and traceable agent steps."
+  ],
+  "next_steps": [
+    "Add golden report fixtures so output quality can be regression tested."
+  ]
+}
+"""
+
+
 class LLMTests(unittest.TestCase):
     def test_build_review_prompt_contains_structured_report(self) -> None:
         prompt = build_review_prompt(sample_report())
@@ -46,6 +67,9 @@ class LLMTests(unittest.TestCase):
         self.assertIn("AI Architecture Summary", prompt)
         self.assertIn('"repo_name": "example"', prompt)
         self.assertIn("Do not invent files", prompt)
+        self.assertIn("Return only a valid JSON object", prompt)
+        self.assertIn("architecture_summary", prompt)
+        self.assertIn("project_highlights", prompt)
 
     def test_build_review_prompt_supports_chinese(self) -> None:
         prompt = build_review_prompt(sample_report(), language="zh-CN")
@@ -54,9 +78,10 @@ class LLMTests(unittest.TestCase):
         self.assertIn("## AI 架构总结", prompt)
         self.assertIn("## 项目亮点", prompt)
         self.assertNotIn("## 简历亮点", prompt)
-        self.assertIn("project highlights section", prompt)
+        self.assertIn("project_highlights should", prompt)
         self.assertIn("prioritized recommendations", prompt)
         self.assertIn("Do not add any resume", prompt)
+        self.assertIn("Each value must be an array", prompt)
 
     def test_extract_openai_text_handles_output_text(self) -> None:
         text = extract_openai_text({"output_text": "hello"})
@@ -122,9 +147,30 @@ class LLMTests(unittest.TestCase):
         self.assertIn("## 项目亮点", normalized)
         self.assertNotIn("简历亮点", normalized)
 
+    def test_parse_ai_review_sections_accepts_fenced_json(self) -> None:
+        sections = parse_ai_review_sections(
+            f"```json\n{sample_ai_review_json()}\n```",
+            language="en",
+        )
+
+        self.assertEqual(
+            sections["project_highlights"],
+            ["The project combines deterministic findings with optional AI synthesis and traceable agent steps."],
+        )
+
+    def test_render_ai_review_sections_uses_fixed_chinese_markdown(self) -> None:
+        sections = parse_ai_review_sections(sample_ai_review_json(), language="zh-CN")
+
+        markdown = render_ai_review_sections(sections, language="zh-CN")
+
+        self.assertIn("## AI 架构总结", markdown)
+        self.assertIn("## 项目亮点", markdown)
+        self.assertNotIn("简历亮点", markdown)
+        self.assertNotIn("\n- \n", markdown)
+
     @patch("repo_review_agent.llm.generate_with_ollama")
     def test_add_ai_review_attaches_provider_output(self, mock_generate) -> None:
-        mock_generate.return_value = "## AI Architecture Summary\nLooks good."
+        mock_generate.return_value = sample_ai_review_json()
 
         report = add_ai_review(
             sample_report(),
@@ -136,11 +182,13 @@ class LLMTests(unittest.TestCase):
         self.assertIsNotNone(report.ai_review)
         self.assertEqual(report.ai_review.provider, "ollama")
         self.assertEqual(report.ai_review.status, "generated")
-        self.assertIn("Looks good", report.ai_review.summary)
+        self.assertIsNotNone(report.ai_review.sections)
+        self.assertIn("## AI Architecture Summary", report.ai_review.summary)
+        self.assertIn("## Project Highlights", report.ai_review.summary)
 
     @patch("repo_review_agent.llm.generate_with_openrouter")
     def test_add_ai_review_supports_openrouter(self, mock_generate) -> None:
-        mock_generate.return_value = "## AI Architecture Summary\nOpenRouter works."
+        mock_generate.return_value = sample_ai_review_json()
 
         report = add_ai_review(
             sample_report(),
@@ -152,7 +200,10 @@ class LLMTests(unittest.TestCase):
         self.assertIsNotNone(report.ai_review)
         self.assertEqual(report.ai_review.provider, "openrouter")
         self.assertEqual(report.ai_review.model, "openrouter/auto")
-        self.assertIn("OpenRouter works", report.ai_review.summary)
+        self.assertEqual(
+            report.ai_review.sections["next_steps"],
+            ["Add golden report fixtures so output quality can be regression tested."],
+        )
 
 
 if __name__ == "__main__":

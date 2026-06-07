@@ -2,7 +2,7 @@
 
 A lightweight repository review agent that analyzes project structure, dependency files, source code, tests, CI configuration, and security hygiene to generate architecture summaries, risk reports, and actionable GitHub issue suggestions.
 
-The MVP is intentionally small and reproducible: it runs without an LLM API key, produces structured JSON, and renders a Markdown report. When enabled, the optional AI layer turns the deterministic scan into a detailed architecture summary, risk explanation, project highlights, and next-step plan.
+The MVP is intentionally small and reproducible: it runs without an LLM API key, produces structured JSON, and renders a Markdown report. When enabled, the optional AI layer asks providers for structured JSON sections, then renders them into a stable architecture summary, risk explanation, project highlights, and next-step plan.
 
 ## Features
 
