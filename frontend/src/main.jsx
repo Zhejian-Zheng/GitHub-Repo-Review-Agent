@@ -1,14 +1,19 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
   ChevronDown,
   Clipboard,
   Download,
+  FileSearch,
   FileText,
+  ListChecks,
   RotateCcw,
+  Search,
+  Sparkles,
   X
 } from "lucide-react";
 import "./styles.css";
@@ -64,6 +69,7 @@ const reportCopy = {
     aiReviewError: "AI review was not generated",
     findings: "Findings",
     agentTrace: "Agent Trace",
+    noTrace: "No agent trace was recorded for this run.",
     step: "Step",
     provider: "Provider",
     model: "Model",
@@ -106,6 +112,7 @@ const reportCopy = {
     aiReviewError: "AI 评审未生成",
     findings: "发现",
     agentTrace: "Agent 执行轨迹",
+    noTrace: "本次运行没有记录 Agent 执行轨迹。",
     step: "步骤",
     provider: "提供方",
     model: "模型",
@@ -133,6 +140,73 @@ const reportCopy = {
       info: "信息"
     }
   }
+};
+
+const progressCopy = {
+  en: [
+    {
+      key: "scan",
+      label: "Scan repository",
+      detail: "Map files, languages, manifests, and CI signals.",
+      icon: Search
+    },
+    {
+      key: "inspect",
+      label: "Inspect key files",
+      detail: "Read README, dependency files, CI, and docs.",
+      icon: FileSearch
+    },
+    {
+      key: "analyze",
+      label: "Run rule checks",
+      detail: "Generate deterministic findings and evidence.",
+      icon: ListChecks
+    },
+    {
+      key: "ai",
+      label: "Synthesize AI review",
+      detail: "Ask the selected model for structured review sections.",
+      icon: Sparkles
+    },
+    {
+      key: "render",
+      label: "Render report",
+      detail: "Build Markdown, JSON, issue suggestions, and trace.",
+      icon: FileText
+    }
+  ],
+  "zh-CN": [
+    {
+      key: "scan",
+      label: "扫描仓库",
+      detail: "识别文件、语言、依赖清单和 CI 信号。",
+      icon: Search
+    },
+    {
+      key: "inspect",
+      label: "检查关键文件",
+      detail: "读取 README、依赖文件、CI 和文档。",
+      icon: FileSearch
+    },
+    {
+      key: "analyze",
+      label: "运行规则检查",
+      detail: "生成确定性发现、证据和建议。",
+      icon: ListChecks
+    },
+    {
+      key: "ai",
+      label: "生成 AI 评审",
+      detail: "请求所选模型返回结构化评审内容。",
+      icon: Sparkles
+    },
+    {
+      key: "render",
+      label: "渲染报告",
+      detail: "生成 Markdown、JSON、Issue 建议和轨迹。",
+      icon: FileText
+    }
+  ]
 };
 
 function buildDemoReport(language) {
@@ -250,6 +324,7 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [markdown, setMarkdown] = useState("");
   const [report, setReport] = useState(null);
+  const [progressStep, setProgressStep] = useState(0);
   const reportRef = useRef(null);
 
   const selectedModelValue = useMemo(() => {
@@ -259,6 +334,18 @@ function App() {
     return option?.value ?? MODEL_OPTIONS[0].value;
   }, [form.ai_model, form.ai_provider]);
   const isChinese = form.report_language === "zh-CN";
+  const runPhases = useMemo(() => {
+    const phases = progressCopy[form.report_language] ?? progressCopy.en;
+    return phases.filter((phase) => phase.key !== "ai" || form.ai_provider !== "none");
+  }, [form.ai_provider, form.report_language]);
+
+  useEffect(() => {
+    if (!isRunning) return undefined;
+    const interval = window.setInterval(() => {
+      setProgressStep((current) => Math.min(current + 1, runPhases.length - 1));
+    }, 1600);
+    return () => window.clearInterval(interval);
+  }, [isRunning, runPhases.length]);
 
   const updateField = (event) => {
     const { name, value } = event.target;
@@ -282,6 +369,7 @@ function App() {
   const runReview = async (event) => {
     event.preventDefault();
     setIsRunning(true);
+    setProgressStep(0);
     setStatus("Running review...");
     setMarkdown("");
     setReport(null);
@@ -433,6 +521,8 @@ function App() {
               )}
             </button>
           </div>
+
+          {isRunning ? <RunProgress phases={runPhases} activeIndex={progressStep} /> : null}
 
           <div className="home-actions">
             <button className="demo-button" type="button" onClick={loadDemoReport}>
@@ -652,29 +742,83 @@ const ReportView = React.forwardRef(function ReportView(
           </div>
         </ReportSection>
 
-        <details className="rounded-lg border border-slate-200 bg-white">
-          <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-700">
-            {copy.agentTrace}
-          </summary>
-          <ol className="space-y-3 border-t border-slate-200 bg-slate-50 p-4">
-            {(report.agent_trace ?? []).map((step, index) => (
-              <li key={`${step.tool}-${index}`} className="trace-item">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="neutral">
-                    {copy.step} {index + 1}
-                  </Badge>
-                  <strong>{step.tool}</strong>
-                </div>
-                <p>{step.thought}</p>
-                <p>{step.observation}</p>
-              </li>
-            ))}
-          </ol>
-        </details>
+        <ReportSection
+          title={copy.agentTrace}
+          tone="process"
+          icon={<Activity size={18} aria-hidden="true" />}
+        >
+          <AgentTraceTimeline trace={report.agent_trace ?? []} copy={copy} />
+        </ReportSection>
       </div>
     </section>
   );
 });
+
+function RunProgress({ phases, activeIndex }) {
+  const progress = phases.length > 1 ? (activeIndex / (phases.length - 1)) * 100 : 100;
+
+  return (
+    <div className="run-progress" aria-live="polite">
+      <div className="run-progress-bar" aria-hidden="true">
+        <span style={{ width: `${progress}%` }} />
+      </div>
+      <ol className="run-progress-steps">
+        {phases.map((phase, index) => {
+          const Icon = phase.icon;
+          const state = index < activeIndex ? "done" : index === activeIndex ? "active" : "pending";
+          return (
+            <li key={phase.key} className={`run-progress-step ${state}`}>
+              <span className="run-progress-icon">
+                {state === "done" ? (
+                  <CheckCircle2 size={18} aria-hidden="true" />
+                ) : state === "active" ? (
+                  <RotateCcw size={17} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Icon size={17} aria-hidden="true" />
+                )}
+              </span>
+              <span className="run-progress-text">
+                <strong>{phase.label}</strong>
+                <small>{phase.detail}</small>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function AgentTraceTimeline({ trace, copy }) {
+  if (!trace.length) {
+    return <p className="text-sm text-muted">{copy.noTrace}</p>;
+  }
+
+  return (
+    <ol className="trace-timeline">
+      {trace.map((step, index) => (
+        <li key={`${step.tool}-${index}`} className="trace-step">
+          <div className="trace-marker">
+            <span>{index + 1}</span>
+          </div>
+          <div className="trace-card">
+            <div className="trace-card-header">
+              <Badge tone="neutral">
+                {copy.step} {index + 1}
+              </Badge>
+              <strong>{step.tool}</strong>
+            </div>
+            <p className="trace-thought">{step.thought}</p>
+            <p className="trace-observation">{step.observation}</p>
+            {step.tool_input ? (
+              <pre className="trace-input">{JSON.stringify(step.tool_input, null, 2)}</pre>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 function ReportToolbar({ copy, onCopy, onDownload, onClose }) {
   return (
