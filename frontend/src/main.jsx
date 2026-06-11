@@ -329,6 +329,7 @@ function App() {
   const [markdown, setMarkdown] = useState("");
   const [report, setReport] = useState(null);
   const [progressStep, setProgressStep] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const reportRef = useRef(null);
 
   const selectedModelValue = useMemo(() => {
@@ -350,6 +351,16 @@ function App() {
     }, 1600);
     return () => window.clearInterval(interval);
   }, [isRunning, runPhases.length]);
+
+  useEffect(() => {
+    if (!isRunning) return undefined;
+    const interval = window.setInterval(() => {
+      setElapsedSeconds((current) => current + 1);
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [isRunning]);
+
+  const activeRunPhase = runPhases[progressStep] ?? runPhases[0];
 
   const updateField = (event) => {
     const { name, value } = event.target;
@@ -374,7 +385,8 @@ function App() {
     event.preventDefault();
     setIsRunning(true);
     setProgressStep(0);
-    setStatus("Running review...");
+    setElapsedSeconds(0);
+    setStatus(isChinese ? "评审已开始，正在连接后端..." : "Review started. Connecting to backend...");
     setMarkdown("");
     setReport(null);
 
@@ -503,7 +515,7 @@ function App() {
             <h1>{isChinese ? "你想看看哪个仓库" : "Put the repo you want to know"}</h1>
           </div>
 
-          <div className="prompt-bar">
+          <div className={`prompt-bar ${isRunning ? "running" : ""}`} aria-busy={isRunning}>
             <input
               className="repo-input"
               name="target"
@@ -511,7 +523,14 @@ function App() {
               onChange={updateField}
               placeholder="put the repo you want to know"
               aria-label="GitHub repository URL"
+              disabled={isRunning}
             />
+            {isRunning ? (
+              <div className="prompt-running-indicator" aria-live="polite">
+                <RotateCcw size={16} className="animate-spin" aria-hidden="true" />
+                <span>{isChinese ? "正在评审" : "Reviewing"}</span>
+              </div>
+            ) : null}
             <button
               className="icon-button send"
               type="submit"
@@ -526,7 +545,14 @@ function App() {
             </button>
           </div>
 
-          {isRunning ? <RunProgress phases={runPhases} activeIndex={progressStep} /> : null}
+          {isRunning ? (
+            <RunProgress
+              phases={runPhases}
+              activeIndex={progressStep}
+              elapsedSeconds={elapsedSeconds}
+              language={form.report_language}
+            />
+          ) : null}
 
           <div className="home-actions">
             <button className="demo-button" type="button" onClick={loadDemoReport}>
@@ -536,7 +562,11 @@ function App() {
           </div>
 
           <p className="home-status" aria-live="polite">
-            {status}
+            {isRunning && activeRunPhase
+              ? isChinese
+                ? `当前状态：${activeRunPhase.label}，已运行 ${elapsedSeconds} 秒。`
+                : `Current status: ${activeRunPhase.label}, ${elapsedSeconds}s elapsed.`
+              : status}
           </p>
         </form>
       </section>
@@ -758,11 +788,25 @@ const ReportView = React.forwardRef(function ReportView(
   );
 });
 
-function RunProgress({ phases, activeIndex }) {
+function RunProgress({ phases, activeIndex, elapsedSeconds, language }) {
   const progress = phases.length > 1 ? (activeIndex / (phases.length - 1)) * 100 : 100;
+  const activePhase = phases[activeIndex] ?? phases[0];
+  const isChinese = language === "zh-CN";
 
   return (
     <div className="run-progress" aria-live="polite">
+      {activePhase ? (
+        <div className="run-progress-head">
+          <span className="run-status-dot" aria-hidden="true" />
+          <div className="run-progress-current">
+            <strong>{activePhase.label}</strong>
+            <small>{activePhase.detail}</small>
+          </div>
+          <span className="run-progress-time">
+            {isChinese ? `已运行 ${elapsedSeconds} 秒` : `${elapsedSeconds}s elapsed`}
+          </span>
+        </div>
+      ) : null}
       <div className="run-progress-bar" aria-hidden="true">
         <span style={{ width: `${progress}%` }} />
       </div>
