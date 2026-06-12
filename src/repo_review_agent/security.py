@@ -7,7 +7,6 @@ from collections import defaultdict, deque
 from threading import Lock
 from urllib.parse import urlparse
 
-
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
 FALSY_VALUES = {"0", "false", "no", "off"}
 
@@ -55,7 +54,7 @@ def is_github_https_url(target: str) -> bool:
 
 def validate_target_policy(target: str, *, allow_local_targets: bool | None = None) -> None:
     if allow_local_targets is None:
-        allow_local_targets = bool_from_env("REPO_REVIEW_ALLOW_LOCAL_TARGETS", True)
+        allow_local_targets = bool_from_env("REPO_REVIEW_ALLOW_LOCAL_TARGETS", False)
 
     if allow_local_targets or is_github_https_url(target):
         return

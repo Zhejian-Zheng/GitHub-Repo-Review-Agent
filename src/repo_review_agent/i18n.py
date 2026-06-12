@@ -3,8 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from .models import AgentStep, AIReview, Finding, ReviewReport
-
+from .models import AIReview, Finding, ReviewReport
 
 DEFAULT_REPORT_LANGUAGE = "en"
 SUPPORTED_REPORT_LANGUAGES = {

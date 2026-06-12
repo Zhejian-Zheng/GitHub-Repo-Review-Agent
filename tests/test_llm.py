@@ -1,14 +1,14 @@
-from unittest.mock import patch
 import unittest
+from unittest.mock import patch
 
 from repo_review_agent.llm import (
     add_ai_review,
     build_review_prompt,
     extract_openai_text,
     extract_openrouter_text,
+    normalize_ai_review_summary,
     parse_ai_review_sections,
     render_ai_review_sections,
-    normalize_ai_review_summary,
     resolve_model,
 )
 from repo_review_agent.models import Finding, ReviewReport

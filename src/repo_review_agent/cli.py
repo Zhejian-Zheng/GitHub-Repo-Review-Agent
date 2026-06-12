@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
-import json
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -228,8 +228,7 @@ class resolve_target:
             subprocess.run(
                 ["git", "clone", "--depth", "1", self.target, str(clone_path)],
                 check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
             )
             return clone_path

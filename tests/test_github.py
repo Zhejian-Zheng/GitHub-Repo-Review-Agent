@@ -1,5 +1,5 @@
-from unittest.mock import patch
 import unittest
+from unittest.mock import patch
 
 from repo_review_agent.github import (
     GitHubClient,

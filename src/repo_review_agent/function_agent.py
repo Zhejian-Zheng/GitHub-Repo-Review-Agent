@@ -9,18 +9,17 @@ from typing import Any
 from .analyzer import analyze_snapshot
 from .i18n import ai_section_headings, language_display_name, normalize_report_language
 from .llm import (
-    AIProviderError,
     OPENAI_RESPONSES_URL,
+    AIProviderError,
     _post_json,
     extract_openai_text,
     parse_ai_review_sections,
     render_ai_review_sections,
     resolve_model,
 )
-from .models import AIReview, AgentStep, RepositorySnapshot, ReviewReport
+from .models import AgentStep, AIReview, RepositorySnapshot, ReviewReport
 from .report import render_markdown
 from .scanner import read_text_file, scan_repository
-
 
 FUNCTION_CALLING_TOOLS = [
     {

@@ -46,7 +46,7 @@ WEB_MAX_FILE_SIZE_LIMIT = int_from_env(
     minimum=1_024,
 )
 WEB_RATE_LIMITER = InMemoryRateLimiter(
-    limit_per_minute=int_from_env("REPO_REVIEW_RATE_LIMIT_PER_MINUTE", 0, minimum=0)
+    limit_per_minute=int_from_env("REPO_REVIEW_RATE_LIMIT_PER_MINUTE", 30, minimum=0)
 )
 
 FALLBACK_HTML = """<!doctype html>

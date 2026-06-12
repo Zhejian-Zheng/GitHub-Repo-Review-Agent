@@ -11,7 +11,6 @@ from urllib.request import Request, urlopen
 
 from .models import Finding, ReviewReport
 
-
 GITHUB_API_URL = "https://api.github.com"
 
 

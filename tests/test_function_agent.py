@@ -1,8 +1,8 @@
+import os
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
-import os
-import unittest
 
 from repo_review_agent.function_agent import (
     OpenAIFunctionCallingAgent,

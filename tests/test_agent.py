@@ -1,6 +1,6 @@
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
 
 from repo_review_agent.agent import RepoReviewAgent
 from repo_review_agent.report import render_markdown

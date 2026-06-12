@@ -270,12 +270,13 @@ Then open `http://localhost:8000`.
 Review through the HTTP API:
 
 ```bash
+export REPO_REVIEW_ALLOW_LOCAL_TARGETS=true
 curl -X POST http://localhost:8000/review \
   -H "Content-Type: application/json" \
   -d '{"target": ".", "mode": "agent", "ai_provider": "openrouter", "ai_model": "openrouter/auto", "report_language": "zh-CN"}'
 ```
 
-For public demos, set `REPO_REVIEW_ALLOW_LOCAL_TARGETS=false` and `REPO_REVIEW_RATE_LIMIT_PER_MINUTE=10` so visitors can only review GitHub URLs and cannot spam the endpoint.
+For public demos, keep `REPO_REVIEW_ALLOW_LOCAL_TARGETS=false` and set `REPO_REVIEW_RATE_LIMIT_PER_MINUTE=30` or lower so visitors can only review GitHub URLs and cannot spam the endpoint.
 
 ## MCP Server
 

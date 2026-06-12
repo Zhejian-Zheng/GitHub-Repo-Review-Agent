@@ -6,7 +6,6 @@ from pathlib import Path
 from .i18n import localize_report, normalize_report_language
 from .models import Finding, ReviewReport
 
-
 REPORT_LABELS = {
     "en": {
         "title": "Repository Review",

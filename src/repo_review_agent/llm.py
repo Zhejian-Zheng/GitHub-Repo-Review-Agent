@@ -10,7 +10,6 @@ from urllib.request import Request, urlopen
 from .i18n import ai_section_headings, language_display_name, normalize_report_language
 from .models import AIReview, ReviewReport
 
-
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENAI_MODEL = "gpt-5-mini"
@@ -228,7 +227,7 @@ def render_ai_review_sections(
     headings = ai_section_headings(language)
     lines: list[str] = []
 
-    for key, heading in zip(AI_REVIEW_SECTION_KEYS, headings):
+    for key, heading in zip(AI_REVIEW_SECTION_KEYS, headings, strict=True):
         items = [item for item in sections.get(key, []) if item.strip()]
         if not items:
             items = [_empty_ai_review_section_text(key, language)]

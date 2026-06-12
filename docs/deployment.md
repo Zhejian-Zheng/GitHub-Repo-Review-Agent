@@ -46,7 +46,7 @@ OPENROUTER_MODEL=openrouter/auto
 OPENROUTER_APP_TITLE=GitHub Repo Review Agent
 
 REPO_REVIEW_ALLOW_LOCAL_TARGETS=false
-REPO_REVIEW_RATE_LIMIT_PER_MINUTE=10
+REPO_REVIEW_RATE_LIMIT_PER_MINUTE=30
 REPO_REVIEW_MAX_FILES_LIMIT=1000
 REPO_REVIEW_MAX_FILE_SIZE_LIMIT=1000000
 ```
@@ -104,7 +104,7 @@ docker compose -f docker-compose.prod.yml up -d --build web
 For public demos, keep these controls enabled:
 
 - `REPO_REVIEW_ALLOW_LOCAL_TARGETS=false` so visitors can only review GitHub URLs.
-- `REPO_REVIEW_RATE_LIMIT_PER_MINUTE=10` to reduce accidental abuse.
+- `REPO_REVIEW_RATE_LIMIT_PER_MINUTE=30` or lower to reduce accidental abuse.
 - Keep API keys only in `.env` on the server.
 - Prefer a low-cost provider model such as `openrouter/auto` or a capped OpenRouter model.
 

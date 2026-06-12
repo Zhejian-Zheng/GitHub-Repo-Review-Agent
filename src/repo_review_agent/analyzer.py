@@ -9,7 +9,6 @@ from pathlib import Path
 from .models import Finding, RepositorySnapshot, ReviewReport
 from .scanner import read_text_file, scan_repository
 
-
 SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*['\"][^'\"]{12,}['\"]"),
     re.compile(r"AKIA[0-9A-Z]{16}"),

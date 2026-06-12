@@ -5,7 +5,6 @@ from pathlib import Path
 
 from .models import RepoFile, RepositorySnapshot
 
-
 IGNORED_DIRS = {
     ".git",
     ".hg",
