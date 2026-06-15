@@ -1,7 +1,9 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from repo_review_agent.models import Finding, ReviewReport
-from repo_review_agent.report import render_markdown
+from repo_review_agent.models import AgentStep, AIReview, Finding, ReviewReport
+from repo_review_agent.report import render_markdown, write_json, write_markdown
 
 
 class ReportRenderingTests(unittest.TestCase):
@@ -41,6 +43,81 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("## GitHub Issue 待办", markdown)
         self.assertIn("证据文件", markdown)
         self.assertIn("`src/app.py`", markdown)
+
+    def test_render_markdown_includes_ai_error_and_no_issue_backlog(self) -> None:
+        report = ReviewReport(
+            repo_name="healthy",
+            generated_at="2026-05-28T00:00:00+00:00",
+            overview=["No application source files were detected in the scanned sample."],
+            metrics={
+                "files_scanned": 1,
+                "files_skipped": 0,
+                "source_files": 0,
+                "test_files": 0,
+                "dependency_files": 0,
+                "ci_files": 0,
+                "languages": {},
+            },
+            framework_signals={},
+            findings=[
+                Finding(
+                    title="No major project hygiene gaps detected",
+                    severity="info",
+                    category="summary",
+                    evidence=["README was present."],
+                    recommendation="Keep improving.",
+                )
+            ],
+            ai_review=AIReview(
+                provider="openai",
+                model="gpt-test",
+                status="error",
+                summary="",
+                error="boom",
+            ),
+            agent_trace=[
+                AgentStep(
+                    thought="Think",
+                    tool="scan_repository",
+                    tool_input={"path": "."},
+                    observation="Done",
+                )
+            ],
+        )
+
+        markdown = render_markdown(report)
+
+        self.assertIn("AI review was not generated: `boom`", markdown)
+        self.assertIn("- Languages: `none detected`", markdown)
+        self.assertIn("- No immediate issue suggestions.", markdown)
+        self.assertIn("### Step 1: `scan_repository`", markdown)
+
+    def test_write_json_and_markdown_outputs(self) -> None:
+        report = ReviewReport(
+            repo_name="example",
+            generated_at="2026-05-28T00:00:00+00:00",
+            overview=["No dependency manifest was found."],
+            metrics={
+                "files_scanned": 1,
+                "files_skipped": 0,
+                "source_files": 0,
+                "test_files": 0,
+                "dependency_files": 0,
+                "ci_files": 0,
+            },
+            framework_signals={"FastAPI": ["pyproject.toml: fastapi"]},
+            findings=[],
+        )
+
+        with TemporaryDirectory() as tmp:
+            markdown_path = Path(tmp) / "report.md"
+            json_path = Path(tmp) / "report.json"
+
+            write_markdown(report, markdown_path)
+            write_json(report, json_path)
+
+            self.assertIn("**FastAPI**", markdown_path.read_text(encoding="utf-8"))
+            self.assertIn('"repo_name": "example"', json_path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

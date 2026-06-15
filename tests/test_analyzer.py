@@ -2,10 +2,24 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from repo_review_agent.analyzer import analyze_repository
+from repo_review_agent.analyzer import analyze_repository, build_overview, detect_framework_signals
+from repo_review_agent.scanner import scan_repository
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_analyzer_reports_missing_project_metadata_and_manifest(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+            report = analyze_repository(root)
+
+        titles = {finding.title for finding in report.findings}
+        self.assertIn("Add a README with setup and usage instructions", titles)
+        self.assertIn("Add an explicit open-source license", titles)
+        self.assertIn("Add a .gitignore file", titles)
+        self.assertIn("Add a dependency manifest", titles)
+
     def test_analyzer_reports_missing_tests_and_ci(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -200,6 +214,81 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(report.findings[0].title, "No major project hygiene gaps detected")
         self.assertTrue(report.findings[0].evidence_paths)
         self.assertIn("README.md", report.findings[0].evidence_paths)
+
+    def test_analyzer_detects_framework_signals_from_package_json_and_pyproject(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "frontend").mkdir()
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            (root / "pyproject.toml").write_text(
+                "[project]\ndependencies = ['fastapi', 'pytest', 'openai']\n",
+                encoding="utf-8",
+            )
+            (root / "frontend" / "package.json").write_text(
+                '{"dependencies":{"react":"18.0.0","next":"14.0.0","@nestjs/core":"1.0.0"}}',
+                encoding="utf-8",
+            )
+            (root / "Dockerfile").write_text("FROM python:3.12\nUSER app\n", encoding="utf-8")
+
+            snapshot = scan_repository(root)
+            signals = detect_framework_signals(snapshot, root)
+
+        self.assertIn("FastAPI", signals)
+        self.assertIn("Pytest", signals)
+        self.assertIn("OpenAI", signals)
+        self.assertIn("React", signals)
+        self.assertIn("Next.js", signals)
+        self.assertIn("NestJS", signals)
+        self.assertIn("Docker", signals)
+
+    def test_analyzer_handles_invalid_package_json_as_tooling_signal(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text("{invalid", encoding="utf-8")
+
+            snapshot = scan_repository(root)
+            signals = detect_framework_signals(snapshot, root)
+
+        self.assertIn("JavaScript tooling", signals)
+        self.assertIn("could not be parsed", signals["JavaScript tooling"][0])
+
+    def test_dockerfile_with_non_root_user_does_not_report_hardening_gap(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text(
+                "# Example\n\n## Usage\nRun docker build.\n\n## Demo\nExample output.\n",
+                encoding="utf-8",
+            )
+            (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
+            (root / ".gitignore").write_text(".venv\n", encoding="utf-8")
+            (root / "pyproject.toml").write_text("[project]\nname = 'example'\n", encoding="utf-8")
+            (root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_app.py").write_text("def test_app(): pass\n", encoding="utf-8")
+            (root / ".github" / "workflows").mkdir(parents=True)
+            (root / ".github" / "workflows" / "ci.yml").write_text(
+                "name: CI\nrun: python -m unittest discover\n",
+                encoding="utf-8",
+            )
+            (root / "Dockerfile").write_text("FROM python:3.12-slim\nUSER 1000:1000\n", encoding="utf-8")
+
+            report = analyze_repository(root)
+
+        titles = {finding.title for finding in report.findings}
+        self.assertNotIn("Harden Docker image with a non-root runtime user", titles)
+
+    def test_build_overview_reports_absent_signals(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            snapshot = scan_repository(root)
+
+        overview = build_overview(snapshot, {})
+
+        self.assertIn("No application source files were detected in the scanned sample.", overview)
+        self.assertIn("No dependency manifest was found.", overview)
+        self.assertIn("No test files were detected.", overview)
+        self.assertIn("No CI workflow files were detected.", overview)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,15 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from repo_review_agent.agent import RepoReviewAgent
+from repo_review_agent.agent import (
+    AgentState,
+    RepoReviewAgent,
+    _compact_preview,
+    _is_helpful_doc_candidate,
+)
+from repo_review_agent.llm import AIProviderError
 from repo_review_agent.report import render_markdown
 
 
@@ -41,6 +48,78 @@ class RepoReviewAgentTests(unittest.TestCase):
         self.assertIn("## Agent Trace", markdown)
         self.assertIn("scan_repository", markdown)
         self.assertIn("finalize_report", markdown)
+
+    @patch("repo_review_agent.agent.add_ai_review")
+    def test_agent_generates_ai_review_when_configured(self, mock_add_ai_review) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+
+            def attach(report, **kwargs):
+                from dataclasses import replace
+
+                from repo_review_agent.models import AIReview
+
+                return replace(
+                    report,
+                    ai_review=AIReview(
+                        provider=kwargs["provider"],
+                        model="mock-model",
+                        status="generated",
+                        summary="ok",
+                    ),
+                )
+
+            mock_add_ai_review.side_effect = attach
+            report = RepoReviewAgent(ai_provider="ollama").run(root)
+
+        self.assertIsNotNone(report.ai_review)
+        self.assertEqual(report.ai_review.status, "generated")
+        self.assertIn("generate_ai_review", [step.tool for step in report.agent_trace or []])
+
+    @patch("repo_review_agent.agent.add_ai_review")
+    def test_agent_preserves_report_when_ai_review_fails(self, mock_add_ai_review) -> None:
+        mock_add_ai_review.side_effect = AIProviderError("offline")
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            report = RepoReviewAgent(ai_provider="ollama").run(root)
+
+        self.assertIsNotNone(report.ai_review)
+        self.assertEqual(report.ai_review.status, "error")
+        self.assertIn("offline", report.ai_review.error)
+
+    @patch("repo_review_agent.agent.add_ai_review")
+    def test_agent_can_fail_on_ai_error(self, mock_add_ai_review) -> None:
+        mock_add_ai_review.side_effect = AIProviderError("offline")
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+
+            with self.assertRaises(AIProviderError):
+                RepoReviewAgent(ai_provider="ollama", fail_on_ai_error=True).run(root)
+
+    def test_agent_tool_methods_require_order(self) -> None:
+        agent = RepoReviewAgent()
+        state = AgentState(root=Path(".").resolve())
+
+        with self.assertRaises(RuntimeError):
+            agent._tool_analyze_repository(state, {})
+
+        with self.assertRaises(RuntimeError):
+            agent._tool_finalize_report(state, {})
+
+        with self.assertRaises(RuntimeError):
+            agent._tool_generate_ai_review(state, {"provider": "ollama"})
+
+    def test_compact_preview_and_doc_candidate_helpers(self) -> None:
+        self.assertEqual(_compact_preview("\n\n"), "")
+        self.assertEqual(_compact_preview("abcdef", max_chars=5), "ab...")
+        self.assertFalse(_is_helpful_doc_candidate("README.md"))
+        self.assertFalse(_is_helpful_doc_candidate("docs/example-report.md"))
+        self.assertTrue(_is_helpful_doc_candidate("docs/architecture.md"))
 
 
 if __name__ == "__main__":
