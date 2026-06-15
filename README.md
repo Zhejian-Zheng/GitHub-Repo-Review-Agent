@@ -1,5 +1,14 @@
 # GitHub Repo Review Agent
 
+[![CI](https://github.com/Zhejian-Zheng/GitHub-Repo-Review-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Zhejian-Zheng/GitHub-Repo-Review-Agent/actions/workflows/ci.yml)
+[![GitHub Pages](https://img.shields.io/github/actions/workflow/status/Zhejian-Zheng/GitHub-Repo-Review-Agent/pages.yml?branch=main&label=demo&logo=githubpages&logoColor=white)](https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=111111)
+![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-ready-009688?logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-unittest-2E7D32?logo=checkmarx&logoColor=white)
+
 Put in a repository. Get back a structured engineering review.
 
 GitHub Repo Review Agent is a lightweight developer tool that turns a local repository or public GitHub URL into an architecture summary, project health report, and actionable issue backlog. It combines deterministic repository analysis with an optional AI synthesis layer, so the core review still works without an LLM API key.
