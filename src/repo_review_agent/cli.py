@@ -18,6 +18,7 @@ from .github import (
     apply_github_pr_comment_mode,
     parse_github_repo,
 )
+from .history import HistoryStoreError, SupabaseHistoryStore
 from .i18n import localize_report
 from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .report import render_markdown, write_json, write_markdown
@@ -94,6 +95,24 @@ def main(argv: list[str] | None = None) -> int:
                         error=str(exc),
                     )
 
+        history_result = None
+        if args.save_history:
+            try:
+                history_store = SupabaseHistoryStore.from_env(
+                    supabase_url=args.supabase_url,
+                    service_key=args.supabase_service_key,
+                    timeout=args.history_timeout,
+                )
+                history_result = history_store.save_report(
+                    report=report,
+                    repo_url=_history_repo_identifier(args, repo_path),
+                    branch=args.history_branch or _git_output(repo_path, "rev-parse", "--abbrev-ref", "HEAD"),
+                    commit_sha=args.history_commit_sha or _git_output(repo_path, "rev-parse", "HEAD"),
+                    report_markdown=render_markdown(report, language="en"),
+                )
+            except HistoryStoreError as exc:
+                raise SystemExit(str(exc)) from exc
+
         report = localize_report(report, args.report_language)
 
         if args.output:
@@ -135,6 +154,9 @@ def main(argv: list[str] | None = None) -> int:
             except GitHubIntegrationError as exc:
                 raise SystemExit(str(exc)) from exc
             print(json.dumps({"github_pr_comment": comment_result}, indent=2, ensure_ascii=False))
+
+        if history_result:
+            print(json.dumps({"history": history_result.to_dict()}, indent=2, ensure_ascii=False))
 
     return 0
 
@@ -232,6 +254,37 @@ def build_parser() -> argparse.ArgumentParser:
         default=512_000,
         help="Maximum file size, in bytes, to read during the scan",
     )
+    parser.add_argument(
+        "--save-history",
+        action="store_true",
+        help="Save the review run, findings, AI review, and history diff to Supabase.",
+    )
+    parser.add_argument(
+        "--supabase-url",
+        help="Supabase project URL. Defaults to SUPABASE_URL.",
+    )
+    parser.add_argument(
+        "--supabase-service-key",
+        help="Supabase service role key. Defaults to SUPABASE_SERVICE_ROLE_KEY.",
+    )
+    parser.add_argument(
+        "--history-repo-url",
+        help="Repository identifier stored in history. Defaults to GitHub owner/repo, Git URL, or local path.",
+    )
+    parser.add_argument(
+        "--history-branch",
+        help="Branch name stored with the history run. Defaults to the current Git branch when available.",
+    )
+    parser.add_argument(
+        "--history-commit-sha",
+        help="Commit SHA stored with the history run. Defaults to the current Git commit when available.",
+    )
+    parser.add_argument(
+        "--history-timeout",
+        type=float,
+        default=30,
+        help="Timeout in seconds for Supabase history requests.",
+    )
     return parser
 
 
@@ -265,6 +318,25 @@ class resolve_target:
 def _looks_like_git_url(target: str) -> bool:
     parsed = urlparse(target)
     return parsed.scheme in {"http", "https", "ssh", "git"} or target.startswith("git@")
+
+
+def _history_repo_identifier(args: argparse.Namespace, repo_path: Path) -> str:
+    return args.history_repo_url or args.github_repo or parse_github_repo(args.target) or args.target or str(repo_path)
+
+
+def _git_output(root: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    value = result.stdout.strip()
+    return value or None
 
 
 if __name__ == "__main__":

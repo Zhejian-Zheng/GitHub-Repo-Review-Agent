@@ -6,13 +6,16 @@ from typing import Literal
 
 from .agent import RepoReviewAgent
 from .analyzer import analyze_repository
+from .auth import AuthError, AuthUser, bearer_token_from_headers, get_supabase_user
 from .cli import resolve_target
 from .function_agent import OpenAIFunctionCallingAgent
 from .i18n import localize_report
+from .history import HistoryStoreError, SupabaseHistoryStore
 from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .report import render_markdown
 from .security import (
     InMemoryRateLimiter,
+    bool_from_env,
     client_identifier,
     int_from_env,
     request_token_matches,
@@ -78,13 +81,21 @@ class ReviewRequest(BaseModel):
     report_language: Literal["en", "zh-CN"] = "en"
     max_files: int = Field(500, ge=1, le=WEB_MAX_FILES_LIMIT)
     max_file_size: int = Field(512_000, ge=1_024, le=WEB_MAX_FILE_SIZE_LIMIT)
+    save_history: bool = False
+    history_repo_url: str | None = None
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0")
 
+    @app.get("/auth/me")
+    def auth_me(http_request: Request) -> dict:
+        user = authenticated_user_from_request(http_request, required=True)
+        return {"user": user.to_dict()}
+
     @app.post("/review")
     def review_repository(http_request: Request, request: ReviewRequest) -> dict:
+        user = authenticated_user_from_request(http_request)
         enforce_public_api_controls(http_request, request.target)
 
         try:
@@ -93,11 +104,29 @@ def create_app() -> FastAPI:
         except (AIProviderError, RuntimeError, SystemExit) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        history_result = None
+        if request.save_history:
+            if user is None:
+                raise HTTPException(status_code=401, detail="Sign in before saving review history.")
+            try:
+                history_store = SupabaseHistoryStore.from_env()
+                history_result = history_store.save_report(
+                    report=report,
+                    repo_url=request.history_repo_url or request.target,
+                    report_markdown=render_markdown(report, language=request.report_language),
+                    owner_id=user.id,
+                )
+            except HistoryStoreError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         report = localize_report(report, request.report_language)
-        return {
+        response = {
             "markdown": render_markdown(report, language=request.report_language),
             "report": report.to_dict(),
         }
+        if history_result:
+            response["history"] = history_result.to_dict()
+        return response
 
     if FRONTEND_ASSETS.exists():
         app.mount("/assets", StaticFiles(directory=str(FRONTEND_ASSETS)), name="assets")
@@ -109,6 +138,22 @@ def create_app() -> FastAPI:
         return HTMLResponse(FALLBACK_HTML)
 
     return app
+
+
+def authenticated_user_from_request(http_request: Request, *, required: bool | None = None) -> AuthUser | None:
+    if required is None:
+        required = bool_from_env("REPO_REVIEW_REQUIRE_AUTH", False)
+
+    token = bearer_token_from_headers(http_request.headers)
+    if not token:
+        if required:
+            raise HTTPException(status_code=401, detail="Sign in is required.")
+        return None
+
+    try:
+        return get_supabase_user(token)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 def enforce_public_api_controls(http_request: Request, target: str) -> None:

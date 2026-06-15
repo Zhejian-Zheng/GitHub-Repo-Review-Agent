@@ -49,6 +49,12 @@ class SecurityTests(unittest.TestCase):
         self.assertTrue(request_token_matches({}, None))
         self.assertTrue(request_token_matches({"authorization": "Bearer secret"}, "secret"))
         self.assertTrue(request_token_matches({"x-repo-review-token": "secret"}, "secret"))
+        self.assertTrue(
+            request_token_matches(
+                {"authorization": "Bearer user-jwt", "x-repo-review-token": "secret"},
+                "secret",
+            )
+        )
         self.assertFalse(request_token_matches({"authorization": "Bearer wrong"}, "secret"))
 
     def test_client_identifier_prefers_forwarded_for(self) -> None:

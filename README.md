@@ -30,6 +30,8 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 - Flags project hygiene risks with evidence file paths, including missing tests, shallow test breadth, missing CI, weak CI checks, missing lockfiles, incomplete README guidance, Docker runtime hardening gaps, and possible hard-coded secrets.
 - Flags reproducibility and workflow risks such as floating dependency versions, unpinned Docker base images, and overly broad GitHub Actions write permissions.
 - Generates a Markdown review report and optional JSON output.
+- Can persist review history to Supabase/Postgres and classify findings as new, existing, or resolved across runs.
+- Supports Supabase email/password login for the web UI, with authenticated review history saved per user.
 - Supports English and Simplified Chinese report output.
 - Includes a custom `RepoReviewAgent` that uses a traceable tool-calling loop.
 - Includes an OpenAI Responses API function-calling agent where the model calls repository tools.
@@ -144,6 +146,48 @@ Generate a Simplified Chinese report:
 ```bash
 repo-review . --agent --report-language zh-CN --output review-report.zh.md
 ```
+
+Save review history to Supabase:
+
+1. Open your Supabase SQL Editor and run [`supabase/schema.sql`](supabase/schema.sql).
+2. Set server-side environment variables:
+
+```bash
+export SUPABASE_URL="https://your-project.supabase.co"
+export SUPABASE_ANON_KEY="your_public_anon_key"
+export SUPABASE_SERVICE_ROLE_KEY="your_service_role_key"
+```
+
+3. Run a scan with history persistence:
+
+```bash
+repo-review https://github.com/owner/repo --save-history --output review-report.md
+```
+
+The history store saves repositories, review runs, findings, AI review sections, health score, and a diff against the previous run. The service role key must stay in trusted CLI/server environments; do not expose it in browser code.
+
+Enable Supabase login in the web UI:
+
+In Supabase Auth settings, keep Email provider enabled and add your local or deployed frontend URL to the allowed redirect URLs.
+
+```bash
+export VITE_SUPABASE_URL="https://your-project.supabase.co"
+export VITE_SUPABASE_ANON_KEY="your_public_anon_key"
+export SUPABASE_URL="https://your-project.supabase.co"
+export SUPABASE_ANON_KEY="your_public_anon_key"
+export SUPABASE_SERVICE_ROLE_KEY="your_service_role_key"
+```
+
+Build and run the web app:
+
+```bash
+cd frontend
+npm run build
+cd ..
+repo-review-web
+```
+
+When a user signs in, the frontend sends their Supabase access token to the FastAPI backend. The backend verifies the token with Supabase Auth and saves review history with the authenticated `owner_id`. Set `REPO_REVIEW_REQUIRE_AUTH=true` when you want the web API to reject anonymous review requests.
 
 Preview GitHub issues from findings:
 

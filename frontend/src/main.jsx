@@ -9,9 +9,24 @@ import {
   Clipboard,
   Download,
   FileText,
+  LogIn,
+  LogOut,
   RotateCcw,
+  UserRound,
   X
 } from "lucide-react";
+import {
+  authConfig,
+  clearStoredSession,
+  consumeSessionFromUrl,
+  getCurrentUser,
+  isAuthConfigured,
+  loadStoredSession,
+  saveStoredSession,
+  signInWithPassword,
+  signOut,
+  signUpWithPassword
+} from "./authClient";
 import { DEFAULT_TARGET, MODEL_OPTIONS, progressCopy } from "./config";
 import { buildDemoReport } from "./demoReport";
 import { renderStaticMarkdown } from "./reportMarkdown";
@@ -32,6 +47,8 @@ function App() {
   const [report, setReport] = useState(null);
   const [progressStep, setProgressStep] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [authSession, setAuthSession] = useState(() => loadStoredSession());
+  const [authStatus, setAuthStatus] = useState("");
   const reportRef = useRef(null);
 
   const selectedModelValue = useMemo(() => {
@@ -45,6 +62,31 @@ function App() {
     const phases = progressCopy[form.report_language] ?? progressCopy.en;
     return phases.filter((phase) => phase.key !== "ai" || form.ai_provider !== "none");
   }, [form.ai_provider, form.report_language]);
+
+  useEffect(() => {
+    const urlSession = consumeSessionFromUrl();
+    const session = urlSession || loadStoredSession();
+    if (!session?.access_token) return undefined;
+
+    setAuthSession(session);
+    let isMounted = true;
+    getCurrentUser(session.access_token)
+      .then((user) => {
+        if (!isMounted) return;
+        const nextSession = { ...session, user };
+        saveStoredSession(nextSession);
+        setAuthSession(nextSession);
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        clearStoredSession();
+        setAuthSession(null);
+        setAuthStatus(error.message);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isRunning) return undefined;
@@ -83,6 +125,36 @@ function App() {
     setForm((current) => ({ ...current, report_language: reportLanguage }));
   };
 
+  const handleSignIn = async ({ email, password }) => {
+    setAuthStatus(isChinese ? "正在登录..." : "Signing in...");
+    const session = await signInWithPassword(email, password);
+    const user = session.user || (await getCurrentUser(session.access_token));
+    const nextSession = { ...session, user };
+    saveStoredSession(nextSession);
+    setAuthSession(nextSession);
+    setAuthStatus(isChinese ? "已登录，后续评审会保存历史。" : "Signed in. Review history will be saved.");
+  };
+
+  const handleSignUp = async ({ email, password }) => {
+    setAuthStatus(isChinese ? "正在创建账号..." : "Creating account...");
+    const session = await signUpWithPassword(email, password);
+    if (session.pending_confirmation) {
+      setAuthStatus(isChinese ? "请查看邮箱并确认账号。" : "Check your email to confirm your account.");
+      return;
+    }
+    const user = session.user || (await getCurrentUser(session.access_token));
+    const nextSession = { ...session, user };
+    saveStoredSession(nextSession);
+    setAuthSession(nextSession);
+    setAuthStatus(isChinese ? "账号已创建，后续评审会保存历史。" : "Account created. Review history will be saved.");
+  };
+
+  const handleSignOut = async () => {
+    await signOut(authSession?.access_token);
+    setAuthSession(null);
+    setAuthStatus(isChinese ? "已退出登录。" : "Signed out.");
+  };
+
   const runReview = async (event) => {
     event.preventDefault();
     setIsRunning(true);
@@ -94,13 +166,22 @@ function App() {
 
     const payload = {
       ...form,
-      ai_model: form.ai_model.trim() || null
+      ai_model: form.ai_model.trim() || null,
+      save_history: Boolean(authSession?.access_token),
+      history_repo_url: form.target.trim() || null
     };
 
     try {
+      const headers = { "Content-Type": "application/json" };
+      if (authConfig.apiToken) {
+        headers["X-Repo-Review-Token"] = authConfig.apiToken;
+      }
+      if (authSession?.access_token) {
+        headers.Authorization = `Bearer ${authSession.access_token}`;
+      }
       const response = await fetch("/review", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload)
       });
       const responseText = await response.text();
@@ -123,7 +204,13 @@ function App() {
 
       setMarkdown(data.markdown || "");
       setReport(data.report || null);
-      setStatus("Review complete.");
+      setStatus(
+        data.history
+          ? isChinese
+            ? `评审完成，历史已保存。新增 ${data.history.new_findings_count} 个问题，已解决 ${data.history.resolved_findings_count} 个问题。`
+            : `Review complete. History saved with ${data.history.new_findings_count} new and ${data.history.resolved_findings_count} resolved findings.`
+          : "Review complete."
+      );
       window.requestAnimationFrame(() => {
         reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -180,6 +267,16 @@ function App() {
           </button>
 
           <div className="top-actions">
+            <AuthPanel
+              configured={isAuthConfigured()}
+              session={authSession}
+              status={authStatus}
+              language={form.report_language}
+              onSignIn={handleSignIn}
+              onSignUp={handleSignUp}
+              onSignOut={handleSignOut}
+            />
+
             <label className="model-select" aria-label="Model">
               <select value={selectedModelValue} onChange={updateModel}>
                 {MODEL_OPTIONS.map((option) => (
@@ -287,6 +384,102 @@ function App() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function AuthPanel({ configured, session, status, language, onSignIn, onSignUp, onSignOut }) {
+  const [mode, setMode] = useState("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const isChinese = language === "zh-CN";
+  const userEmail = session?.user?.email;
+
+  if (!configured) {
+    return (
+      <div className="auth-compact unavailable" title="Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY">
+        <UserRound size={16} aria-hidden="true" />
+        <span>{isChinese ? "未配置登录" : "Auth off"}</span>
+      </div>
+    );
+  }
+
+  if (session?.access_token) {
+    return (
+      <div className="auth-compact signed-in">
+        <UserRound size={16} aria-hidden="true" />
+        <span title={userEmail || "Signed in"}>{userEmail || (isChinese ? "已登录" : "Signed in")}</span>
+        <button className="auth-icon-button" type="button" onClick={onSignOut} aria-label="Sign out">
+          <LogOut size={16} aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
+
+  const submitAuth = async (event) => {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+    try {
+      if (mode === "sign-up") {
+        await onSignUp({ email, password });
+      } else {
+        await onSignIn({ email, password });
+      }
+      setPassword("");
+    } catch (authError) {
+      setError(authError.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <form className="auth-panel" onSubmit={submitAuth}>
+      <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+        <button
+          className={mode === "sign-in" ? "active" : ""}
+          type="button"
+          onClick={() => setMode("sign-in")}
+        >
+          {isChinese ? "登录" : "Sign in"}
+        </button>
+        <button
+          className={mode === "sign-up" ? "active" : ""}
+          type="button"
+          onClick={() => setMode("sign-up")}
+        >
+          {isChinese ? "注册" : "Sign up"}
+        </button>
+      </div>
+      <input
+        type="email"
+        value={email}
+        onChange={(event) => setEmail(event.target.value)}
+        placeholder="email"
+        aria-label="Email"
+        required
+      />
+      <input
+        type="password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        placeholder="password"
+        aria-label="Password"
+        minLength={6}
+        required
+      />
+      <button className="auth-submit" type="submit" disabled={isSubmitting}>
+        {isSubmitting ? (
+          <RotateCcw size={15} className="animate-spin" aria-hidden="true" />
+        ) : (
+          <LogIn size={15} aria-hidden="true" />
+        )}
+        {mode === "sign-up" ? (isChinese ? "注册" : "Join") : isChinese ? "登录" : "Login"}
+      </button>
+      {error || status ? <p className={error ? "auth-error" : "auth-status"}>{error || status}</p> : null}
+    </form>
   );
 }
 

@@ -213,6 +213,45 @@ class CLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         mock_agent_class.assert_called_once()
 
+    @patch("repo_review_agent.cli.SupabaseHistoryStore")
+    def test_main_saves_history_when_requested(self, mock_store_class) -> None:
+        mock_store = mock_store_class.from_env.return_value
+        mock_store.save_report.return_value.to_dict.return_value = {
+            "repository_id": "repo-id",
+            "review_run_id": "run-id",
+            "health_score": 100,
+            "new_findings_count": 0,
+            "existing_findings_count": 0,
+            "resolved_findings_count": 0,
+        }
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            output_path = Path(tmp) / "review.md"
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+
+            exit_code = main(
+                [
+                    str(root),
+                    "--output",
+                    str(output_path),
+                    "--save-history",
+                    "--history-repo-url",
+                    "owner/repo",
+                    "--supabase-url",
+                    "https://example.supabase.co",
+                    "--supabase-service-key",
+                    "service-key",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        mock_store_class.from_env.assert_called_once()
+        mock_store.save_report.assert_called_once()
+        self.assertEqual(mock_store.save_report.call_args.kwargs["repo_url"], "owner/repo")
+        self.assertIn("# Repository Review: repo", mock_store.save_report.call_args.kwargs["report_markdown"])
+
     @patch("repo_review_agent.cli.ChatGPTReviewAgent")
     def test_main_runs_chatgpt_agent_mode(self, mock_agent_class) -> None:
         mock_agent_class.return_value.run.return_value = minimal_report()

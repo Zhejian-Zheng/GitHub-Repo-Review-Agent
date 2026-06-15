@@ -142,6 +142,40 @@ class WebAPITests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 429)
 
+    @patch("repo_review_agent.web.get_supabase_user")
+    def test_authenticated_user_from_request_supports_required_login(self, mock_get_user) -> None:
+        from fastapi import HTTPException
+
+        from repo_review_agent.auth import AuthUser
+        from repo_review_agent.web import authenticated_user_from_request
+
+        mock_get_user.return_value = AuthUser(id="user-id", email="user@example.com")
+
+        user = authenticated_user_from_request(
+            _fake_request(headers={"authorization": "Bearer access-token"}),
+            required=True,
+        )
+
+        self.assertEqual(user.id, "user-id")
+        mock_get_user.assert_called_once_with("access-token")
+
+        with self.assertRaises(HTTPException) as context:
+            authenticated_user_from_request(_fake_request(headers={}), required=True)
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    @patch("repo_review_agent.web.get_supabase_user")
+    def test_auth_me_endpoint_returns_current_user(self, mock_get_user) -> None:
+        from repo_review_agent.auth import AuthUser
+        from repo_review_agent.web import create_app
+
+        mock_get_user.return_value = AuthUser(id="user-id", email="user@example.com")
+
+        endpoint = _route_endpoint(create_app(), "/auth/me")
+        response = endpoint(_fake_request(headers={"authorization": "Bearer access-token"}))
+
+        self.assertEqual(response, {"user": {"id": "user-id", "email": "user@example.com"}})
+
     def test_review_endpoint_returns_markdown_and_handles_errors(self) -> None:
         from fastapi import HTTPException
 
@@ -170,6 +204,52 @@ class WebAPITests(unittest.TestCase):
 
         self.assertIn("markdown", response)
         self.assertEqual(context.exception.status_code, 400)
+
+    @patch("repo_review_agent.web.SupabaseHistoryStore")
+    @patch("repo_review_agent.web.get_supabase_user")
+    def test_review_endpoint_saves_history_for_authenticated_user(
+        self,
+        mock_get_user,
+        mock_store_class,
+    ) -> None:
+        from repo_review_agent.auth import AuthUser
+        from repo_review_agent.web import ReviewRequest, create_app
+
+        mock_get_user.return_value = AuthUser(id="user-id", email="user@example.com")
+        mock_store = mock_store_class.from_env.return_value
+        mock_store.save_report.return_value.to_dict.return_value = {
+            "repository_id": "repo-id",
+            "review_run_id": "run-id",
+            "health_score": 95,
+            "new_findings_count": 1,
+            "existing_findings_count": 0,
+            "resolved_findings_count": 0,
+        }
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            endpoint = _route_endpoint(create_app(), "/review")
+
+            with patch.dict(
+                "os.environ",
+                {"REPO_REVIEW_ALLOW_LOCAL_TARGETS": "true", "REPO_REVIEW_API_TOKEN": ""},
+                clear=False,
+            ):
+                response = endpoint(
+                    _fake_request(headers={"authorization": "Bearer access-token"}),
+                    ReviewRequest(
+                        target=str(root),
+                        mode="direct",
+                        save_history=True,
+                        history_repo_url="owner/repo",
+                    ),
+                )
+
+        self.assertEqual(response["history"]["review_run_id"], "run-id")
+        mock_store.save_report.assert_called_once()
+        self.assertEqual(mock_store.save_report.call_args.kwargs["owner_id"], "user-id")
+        self.assertEqual(mock_store.save_report.call_args.kwargs["repo_url"], "owner/repo")
 
     def test_index_uses_fallback_or_built_frontend(self) -> None:
         import repo_review_agent.web as web
