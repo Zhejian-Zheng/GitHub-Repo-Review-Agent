@@ -379,11 +379,7 @@ def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
                     snapshot.dependency_files,
                     snapshot.test_files,
                     snapshot.ci_files,
-                    [
-                        file.path
-                        for file in snapshot.files
-                        if file.path.lower() in {"readme.md", "license", "license.md", ".gitignore"}
-                    ],
+                    _project_meta_paths(snapshot),
                     limit=8,
                 ),
             )
@@ -687,6 +683,19 @@ def _has_frontend_package(snapshot: RepositorySnapshot) -> bool:
 
 def _frontend_package_paths(snapshot: RepositorySnapshot) -> list[str]:
     return [path for path in snapshot.dependency_files if path.lower().endswith("package.json")]
+
+
+def _project_meta_paths(snapshot: RepositorySnapshot) -> list[str]:
+    paths_by_lower = {
+        file.path.lower(): file.path
+        for file in snapshot.files
+        if file.path.lower() in {"readme.md", ".gitignore", "license", "license.md"}
+    }
+    return [
+        paths_by_lower[name]
+        for name in ("readme.md", ".gitignore", "license", "license.md")
+        if name in paths_by_lower
+    ]
 
 
 def _first_paths(*path_groups: Iterable[str], limit: int = 5) -> list[str]:

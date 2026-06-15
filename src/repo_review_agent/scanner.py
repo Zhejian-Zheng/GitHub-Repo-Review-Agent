@@ -170,7 +170,10 @@ def scan_repository(
 
 
 def _iter_files(root: Path):
-    for path in root.rglob("*"):
+    for path in sorted(
+        root.rglob("*"),
+        key=lambda candidate: _relative_path(root, candidate).lower(),
+    ):
         if not path.is_file():
             continue
         if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):

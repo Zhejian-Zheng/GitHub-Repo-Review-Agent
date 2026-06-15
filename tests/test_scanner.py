@@ -53,6 +53,24 @@ class ScannerTests(unittest.TestCase):
         self.assertNotIn("node_modules", snapshot.top_level_items)
         self.assertNotIn("node_modules/ignored.js", [file.path for file in snapshot.files])
 
+    def test_scan_repository_returns_files_in_deterministic_path_order(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
+            (root / ".gitignore").write_text(".venv\n", encoding="utf-8")
+            (root / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+            snapshot = scan_repository(root)
+            limited_snapshot = scan_repository(root, max_files=2)
+
+        self.assertEqual(
+            [file.path for file in snapshot.files],
+            [".gitignore", "LICENSE", "README.md", "src/app.py"],
+        )
+        self.assertEqual([file.path for file in limited_snapshot.files], [".gitignore", "LICENSE"])
+
     def test_scan_repository_classifies_many_file_kinds(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
