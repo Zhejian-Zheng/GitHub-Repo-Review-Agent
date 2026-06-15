@@ -1,4 +1,5 @@
 import importlib.util
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -251,6 +252,114 @@ class WebAPITests(unittest.TestCase):
         self.assertEqual(mock_store.save_report.call_args.kwargs["owner_id"], "user-id")
         self.assertEqual(mock_store.save_report.call_args.kwargs["repo_url"], "owner/repo")
 
+    @patch("repo_review_agent.web.execute_review_request")
+    def test_review_job_endpoint_runs_review_in_background(self, mock_execute_review) -> None:
+        from repo_review_agent.web import ReviewRequest, create_app
+
+        mock_execute_review.return_value = {
+            "markdown": "# Report",
+            "report": {"repo_name": "repo", "findings": []},
+        }
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            app = create_app()
+            submit_endpoint = _route_endpoint(app, "/review/jobs")
+            get_endpoint = _route_endpoint(app, "/review/jobs/{job_id}")
+
+            with patch.dict(
+                "os.environ",
+                {"REPO_REVIEW_ALLOW_LOCAL_TARGETS": "true", "REPO_REVIEW_API_TOKEN": ""},
+                clear=False,
+            ):
+                submitted = submit_endpoint(
+                    _fake_request(headers={}),
+                    ReviewRequest(target=str(root), mode="direct"),
+                )
+                completed = _wait_for_completed_job(get_endpoint, submitted["job_id"])
+
+        self.assertEqual(submitted["status"], "queued")
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["result"]["markdown"], "# Report")
+        mock_execute_review.assert_called_once()
+
+    @patch("repo_review_agent.web.execute_review_request")
+    @patch("repo_review_agent.web.get_supabase_user")
+    def test_review_job_endpoint_protects_user_owned_jobs(
+        self,
+        mock_get_user,
+        mock_execute_review,
+    ) -> None:
+        from fastapi import HTTPException
+
+        from repo_review_agent.auth import AuthUser
+        from repo_review_agent.web import ReviewRequest, create_app
+
+        mock_execute_review.return_value = {"markdown": "# Report", "report": {}}
+        mock_get_user.return_value = AuthUser(id="owner-id", email="owner@example.com")
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            app = create_app()
+            submit_endpoint = _route_endpoint(app, "/review/jobs")
+            get_endpoint = _route_endpoint(app, "/review/jobs/{job_id}")
+
+            with patch.dict(
+                "os.environ",
+                {"REPO_REVIEW_ALLOW_LOCAL_TARGETS": "true", "REPO_REVIEW_API_TOKEN": ""},
+                clear=False,
+            ):
+                submitted = submit_endpoint(
+                    _fake_request(headers={"authorization": "Bearer owner-token"}),
+                    ReviewRequest(target=str(root), mode="direct"),
+                )
+                mock_get_user.return_value = AuthUser(id="other-id", email="other@example.com")
+                with self.assertRaises(HTTPException) as context:
+                    get_endpoint(
+                        _fake_request(headers={"authorization": "Bearer other-token"}),
+                        submitted["job_id"],
+                    )
+
+        self.assertEqual(context.exception.status_code, 403)
+
+    @patch("repo_review_agent.web.SupabaseHistoryStore")
+    @patch("repo_review_agent.web.get_supabase_user")
+    def test_history_api_returns_authenticated_repository_data(
+        self,
+        mock_get_user,
+        mock_store_class,
+    ) -> None:
+        from repo_review_agent.auth import AuthUser
+        from repo_review_agent.web import create_app
+
+        mock_get_user.return_value = AuthUser(id="user-id", email="user@example.com")
+        mock_store = mock_store_class.from_env.return_value
+        mock_store.list_repositories.return_value = [{"id": "repo-id", "repo_name": "repo"}]
+        mock_store.get_project_detail.return_value = {
+            "repository": {"id": "repo-id", "repo_name": "repo"},
+            "runs": [],
+            "latestRun": None,
+            "findings": [],
+            "aiReview": None,
+        }
+
+        app = create_app()
+        repositories_endpoint = _route_endpoint(app, "/history/repositories")
+        detail_endpoint = _route_endpoint(app, "/history/repositories/{repository_id}")
+
+        repositories = repositories_endpoint(_fake_request(headers={"authorization": "Bearer token"}))
+        detail = detail_endpoint(_fake_request(headers={"authorization": "Bearer token"}), "repo-id")
+
+        self.assertEqual(repositories["repositories"][0]["id"], "repo-id")
+        self.assertEqual(detail["repository"]["id"], "repo-id")
+        mock_store.list_repositories.assert_called_once_with(owner_id="user-id")
+        mock_store.get_project_detail.assert_called_once_with(
+            repository_id="repo-id",
+            owner_id="user-id",
+        )
+
     def test_index_uses_fallback_or_built_frontend(self) -> None:
         import repo_review_agent.web as web
 
@@ -302,6 +411,17 @@ def _route_endpoint(app, path: str):
         if getattr(route, "path", None) == path:
             return route.endpoint
     raise AssertionError(f"Route not found: {path}")
+
+
+def _wait_for_completed_job(get_endpoint, job_id: str):
+    for _ in range(50):
+        job = get_endpoint(_fake_request(headers={}), job_id)
+        if job["status"] == "completed":
+            return job
+        if job["status"] == "failed":
+            raise AssertionError(job.get("error"))
+        time.sleep(0.02)
+    raise AssertionError("Review job did not complete.")
 
 
 if __name__ == "__main__":

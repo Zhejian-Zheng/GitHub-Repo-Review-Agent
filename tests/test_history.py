@@ -233,6 +233,48 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(repository_payload["owner_id"], "user-id")
         self.assertEqual(repository_payload["repo_url"], "owner/repo")
 
+    def test_supabase_history_store_lists_repositories_for_owner(self) -> None:
+        store = FakeSupabaseHistoryStore()
+
+        repositories = store.list_repositories(owner_id="user-id")
+
+        self.assertEqual(repositories, [{"id": "repo-id"}])
+        repository_call = next(call for call in store.calls if call[1].startswith("repositories?owner_id"))
+        self.assertIn("owner_id=eq.user-id", repository_call[1])
+        self.assertIn("order=updated_at.desc", repository_call[1])
+
+    def test_supabase_history_store_builds_project_detail(self) -> None:
+        class DetailStore(FakeSupabaseHistoryStore):
+            def _request(self, method, path, body=None, *, prefer=None):  # type: ignore[no-untyped-def]
+                self.calls.append((method, path, body, prefer))
+                if path.startswith("repositories?id"):
+                    return [{"id": "repo-id", "repo_name": "repo", "repo_url": "owner/repo"}]
+                if path.startswith("review_runs?"):
+                    return [
+                        {
+                            "id": "run-id",
+                            "health_score": 88,
+                            "new_findings_count": 1,
+                            "existing_findings_count": 0,
+                            "resolved_findings_count": 0,
+                        }
+                    ]
+                if path.startswith("findings?"):
+                    return [
+                        {"fingerprint": "low", "title": "Low", "severity": "low"},
+                        {"fingerprint": "high", "title": "High", "severity": "high"},
+                    ]
+                if path.startswith("ai_reviews?"):
+                    return [{"summary": "AI summary", "status": "generated"}]
+                return []
+
+        detail = DetailStore().get_project_detail(repository_id="repo-id", owner_id="user-id")
+
+        self.assertEqual(detail["repository"]["id"], "repo-id")
+        self.assertEqual(detail["latestRun"]["id"], "run-id")
+        self.assertEqual([finding["title"] for finding in detail["findings"]], ["High", "Low"])
+        self.assertEqual(detail["aiReview"]["summary"], "AI summary")
+
     @patch.dict(
         os.environ,
         {

@@ -24,6 +24,10 @@ class HistoryStoreError(RuntimeError):
     pass
 
 
+class HistoryNotFoundError(HistoryStoreError):
+    pass
+
+
 @dataclass(frozen=True)
 class FindingSnapshot:
     fingerprint: str
@@ -210,6 +214,49 @@ class SupabaseHistoryStore:
             comparison=comparison,
         )
 
+    def list_repositories(self, *, owner_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self._request(
+            "GET",
+            (
+                "repositories"
+                f"?owner_id=eq.{_url_value(owner_id)}"
+                "&select=id,repo_url,repo_name,default_branch,created_at,updated_at"
+                "&order=updated_at.desc"
+                f"&limit={limit}"
+            ),
+        )
+        return _ensure_rows(rows, "repositories")
+
+    def get_project_detail(
+        self,
+        *,
+        repository_id: str,
+        owner_id: str,
+        runs_limit: int = 12,
+    ) -> dict[str, Any]:
+        repository = self._get_owned_repository(repository_id=repository_id, owner_id=owner_id)
+        runs = self._list_review_runs(repository_id=repository_id, limit=runs_limit)
+        latest_run = runs[0] if runs else None
+        if latest_run is None:
+            return {
+                "repository": repository,
+                "runs": runs,
+                "latestRun": None,
+                "findings": [],
+                "aiReview": None,
+            }
+
+        review_run_id = _require_id(latest_run, "review run")
+        findings = self._list_run_findings(review_run_id)
+        ai_review = self._get_run_ai_review(review_run_id)
+        return {
+            "repository": repository,
+            "runs": runs,
+            "latestRun": latest_run,
+            "findings": _sort_finding_rows(findings),
+            "aiReview": ai_review,
+        }
+
     def _upsert_repository(
         self,
         *,
@@ -254,6 +301,61 @@ class SupabaseHistoryStore:
         if not rows:
             return None
         return _first_row(rows, "repository")
+
+    def _get_owned_repository(self, *, repository_id: str, owner_id: str) -> dict[str, Any]:
+        rows = self._request(
+            "GET",
+            (
+                "repositories"
+                f"?id=eq.{_url_value(repository_id)}"
+                f"&owner_id=eq.{_url_value(owner_id)}"
+                "&select=id,repo_url,repo_name,default_branch,created_at,updated_at"
+                "&limit=1"
+            ),
+        )
+        if not rows:
+            raise HistoryNotFoundError("Repository history was not found.")
+        return _first_row(rows, "repository")
+
+    def _list_review_runs(self, *, repository_id: str, limit: int) -> list[dict[str, Any]]:
+        rows = self._request(
+            "GET",
+            (
+                "review_runs"
+                f"?repository_id=eq.{_url_value(repository_id)}"
+                "&select=id,status,commit_sha,branch,health_score,new_findings_count,"
+                "existing_findings_count,resolved_findings_count,created_at,metrics_json,diff_json"
+                "&order=created_at.desc"
+                f"&limit={limit}"
+            ),
+        )
+        return _ensure_rows(rows, "review runs")
+
+    def _list_run_findings(self, review_run_id: str) -> list[dict[str, Any]]:
+        rows = self._request(
+            "GET",
+            (
+                "findings"
+                f"?review_run_id=eq.{_url_value(review_run_id)}"
+                "&select=fingerprint,title,severity,category,evidence_json,"
+                "evidence_paths_json,recommendation,status,created_at"
+            ),
+        )
+        return _ensure_rows(rows, "findings")
+
+    def _get_run_ai_review(self, review_run_id: str) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            (
+                "ai_reviews"
+                f"?review_run_id=eq.{_url_value(review_run_id)}"
+                "&select=provider,model,status,summary,error,sections_json,created_at"
+                "&limit=1"
+            ),
+        )
+        if not rows:
+            return None
+        return _first_row(rows, "AI review")
 
     def _latest_findings(self, repository_id: str) -> list[FindingSnapshot]:
         runs = self._request(
@@ -411,6 +513,14 @@ def _first_row(rows: Any, label: str) -> dict[str, Any]:
     return rows[0]
 
 
+def _ensure_rows(rows: Any, label: str) -> list[dict[str, Any]]:
+    if rows is None:
+        return []
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise HistoryStoreError(f"Supabase did not return valid {label} rows.")
+    return rows
+
+
 def _require_id(row: dict[str, Any], label: str) -> str:
     value = row.get("id")
     if not isinstance(value, str) or not value:
@@ -424,3 +534,14 @@ def _url_value(value: str) -> str:
 
 def _owner_filter(owner_id: str | None) -> str:
     return f"eq.{_url_value(owner_id)}" if owner_id else "is.null"
+
+
+def _sort_finding_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    severity_rank = {"high": 0, "medium": 1, "low": 2, "info": 3}
+    return sorted(
+        rows,
+        key=lambda row: (
+            severity_rank.get(str(row.get("severity", "info")), 4),
+            str(row.get("title", "")),
+        ),
+    )

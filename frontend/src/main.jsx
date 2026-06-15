@@ -19,7 +19,6 @@ import {
   X
 } from "lucide-react";
 import {
-  authConfig,
   clearStoredSession,
   consumeSessionFromUrl,
   getCurrentUser,
@@ -36,6 +35,7 @@ import { buildDemoReport } from "./demoReport";
 import { fetchProjectDetail, fetchRepositories } from "./historyClient";
 import { renderStaticMarkdown } from "./reportMarkdown";
 import { reportCopy } from "./reportCopy";
+import { submitReviewJob, waitForReviewJob } from "./reviewJobsClient";
 import "./styles.css";
 
 function App() {
@@ -294,35 +294,22 @@ function App() {
     };
 
     try {
-      const headers = { "Content-Type": "application/json" };
-      if (authConfig.apiToken) {
-        headers["X-Repo-Review-Token"] = authConfig.apiToken;
-      }
-      if (session?.access_token) {
-        headers.Authorization = `Bearer ${session.access_token}`;
-      }
-      const response = await fetch("/review", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload)
-      });
-      const responseText = await response.text();
-      let data = null;
-      if (responseText) {
-        try {
-          data = JSON.parse(responseText);
-        } catch (error) {
-          throw new Error(
-            "Review backend did not return JSON. Start the backend on port 8000, then try again."
+      const job = await submitReviewJob(payload, session?.access_token);
+      setStatus(
+        isChinese
+          ? `扫描任务已提交：${job.job_id.slice(0, 8)}。正在排队...`
+          : `Review job ${job.job_id.slice(0, 8)} submitted. Waiting for a worker...`
+      );
+      const data = await waitForReviewJob(job.job_id, session?.access_token, {
+        onUpdate: (nextJob) => {
+          const shortId = nextJob.job_id.slice(0, 8);
+          setStatus(
+            isChinese
+              ? `扫描任务 ${shortId}：${translateJobStatus(nextJob.status, true)}。`
+              : `Review job ${shortId}: ${translateJobStatus(nextJob.status, false)}.`
           );
         }
-      }
-      if (!response.ok) {
-        throw new Error(data?.detail || `Review backend returned HTTP ${response.status}.`);
-      }
-      if (!data) {
-        throw new Error("Review backend returned an empty response.");
-      }
+      });
 
       setMarkdown(data.markdown || "");
       setReport(data.report || null);
@@ -871,6 +858,16 @@ function scoreTone(score) {
   if (score >= 85) return "success";
   if (score >= 70) return "warning";
   return "error";
+}
+
+function translateJobStatus(status, isChinese) {
+  const labels = {
+    queued: isChinese ? "排队中" : "queued",
+    running: isChinese ? "扫描中" : "running",
+    completed: isChinese ? "已完成" : "completed",
+    failed: isChinese ? "失败" : "failed"
+  };
+  return labels[status] || status;
 }
 
 const severityStyles = {

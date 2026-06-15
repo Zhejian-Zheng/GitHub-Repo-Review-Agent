@@ -192,7 +192,22 @@ repo-review-web
 
 When a user signs in, the frontend sends their Supabase access token to the FastAPI backend. The frontend refreshes expiring sessions before loading history or saving a review, and the backend verifies the token with Supabase Auth before saving review history with the authenticated `owner_id`. Set `REPO_REVIEW_REQUIRE_AUTH=true` when you want the web API to reject anonymous review requests.
 
+The web UI submits scans through an asynchronous job API:
+
+- `POST /review/jobs` creates an in-memory review job and returns a `job_id`.
+- `GET /review/jobs/{job_id}` returns `queued`, `running`, `completed`, or `failed`, plus the final report when complete.
+- `REPO_REVIEW_JOB_WORKERS` controls the number of background worker threads. The default is `2`.
+
+The original synchronous `POST /review` endpoint is still available for scripts and compatibility.
+
 After signing in and saving at least one review, the web UI shows a project detail workspace for each repository. It includes the latest health score, new/existing/resolved finding counts, top risks, AI summary, issue backlog, historical runs, and a compact score trend.
+
+Repository history is read through backend APIs instead of direct browser-to-Supabase queries:
+
+- `GET /history/repositories`
+- `GET /history/repositories/{repository_id}`
+
+These endpoints verify the Supabase access token, use the server-side service role key, and apply the authenticated user's `owner_id` before returning history rows.
 
 Preview GitHub issues from findings:
 
