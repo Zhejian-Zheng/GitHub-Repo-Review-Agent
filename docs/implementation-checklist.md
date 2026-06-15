@@ -12,6 +12,7 @@ This project is intended to demonstrate a lightweight but realistic AI agent eng
 - Custom `RepoReviewAgent` with traceable `Thought -> Action/tool -> Observation` steps.
 - OpenAI Responses API function-calling agent where the model calls repository tools.
 - GitHub issue draft generation, issue creation, and PR comment support.
+- GitHub Actions PR bot for base-vs-head review, sticky new-risk PR comments, scheduled main scans, and high-risk CI blocking.
 - Dockerfile and Docker Compose workflow.
 - Optional FastAPI API and minimal web UI.
 - Optional MCP server exposing repository review tools.
@@ -20,7 +21,8 @@ This project is intended to demonstrate a lightweight but realistic AI agent eng
 - Additional deterministic rules for floating dependency versions, broad GitHub Actions permissions, and unpinned Docker base images.
 - Shared prompt-tuning guidance and few-shot JSON examples for AI review synthesis and ChatGPT agent output.
 - Supabase/Postgres history schema plus CLI persistence for review runs, health scores, and new/existing/resolved finding diffs.
-- Supabase email/password login for the web UI, backend JWT verification, and per-user authenticated history persistence.
+- Supabase email/password login for the web UI, expiring-session refresh, backend JWT verification, and per-user authenticated history persistence.
+- Signed-in project detail view with latest score, top risks, AI summary, issue backlog, historical scans, and score trend.
 
 ## Resume Summary
 
@@ -29,7 +31,6 @@ Built a hybrid AI repository review agent that combines deterministic static ana
 ## Remaining Nice-to-Haves
 
 - Add dependency vulnerability checks.
-- Add GitHub Actions PR annotation mode.
+- Add line-level GitHub Checks annotations for findings with precise file paths.
 - Add screenshots of the web UI and sample report.
-- Add a web history dashboard backed by the Supabase review history tables.
 - Expand the evaluation fixture set across more stacks such as Django, Next.js, Go services, and monorepos.

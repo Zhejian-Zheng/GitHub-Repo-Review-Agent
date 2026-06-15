@@ -60,13 +60,21 @@ def sample_report() -> ReviewReport:
 
 
 class FakeSupabaseHistoryStore(SupabaseHistoryStore):
-    def __init__(self, previous_findings: list[FindingSnapshot] | None = None) -> None:
+    def __init__(
+        self,
+        previous_findings: list[FindingSnapshot] | None = None,
+        *,
+        existing_repository: bool = True,
+    ) -> None:
         super().__init__(supabase_url="https://example.supabase.co", service_key="service-key")
         self.previous_findings = previous_findings or []
+        self.existing_repository = existing_repository
         self.calls: list[tuple[str, str, list[dict] | None, str | None]] = []
 
     def _request(self, method, path, body=None, *, prefer=None):  # type: ignore[no-untyped-def]
         self.calls.append((method, path, body, prefer))
+        if path.startswith("repositories?repo_url"):
+            return [{"id": "repo-id"}] if self.existing_repository else []
         if path.startswith("repositories"):
             return [{"id": "repo-id"}]
         if path.startswith("review_runs?"):
@@ -190,6 +198,40 @@ class HistoryTests(unittest.TestCase):
         finding_statuses = {row["title"]: row["status"] for row in findings_call[2]}  # type: ignore[index]
         self.assertEqual(finding_statuses["Add automated tests"], "existing")
         self.assertEqual(finding_statuses["Add CI workflow"], "new")
+
+    def test_supabase_history_store_looks_up_repository_by_owner_and_repo_url(self) -> None:
+        store = FakeSupabaseHistoryStore()
+
+        store.save_report(
+            report=sample_report(),
+            repo_url="owner/repo",
+            branch="main",
+            commit_sha="abc123",
+            report_markdown="# Report",
+            owner_id="user-id",
+        )
+
+        repository_lookup = next(call for call in store.calls if call[1].startswith("repositories?repo_url"))
+        self.assertEqual(repository_lookup[0], "GET")
+        self.assertIn("repo_url=eq.owner%2Frepo", repository_lookup[1])
+        self.assertIn("owner_id=eq.user-id", repository_lookup[1])
+
+    def test_supabase_history_store_creates_repository_when_owner_has_no_match(self) -> None:
+        store = FakeSupabaseHistoryStore(existing_repository=False)
+
+        store.save_report(
+            report=sample_report(),
+            repo_url="owner/repo",
+            branch="main",
+            commit_sha="abc123",
+            report_markdown="# Report",
+            owner_id="user-id",
+        )
+
+        repository_create = next(call for call in store.calls if call[0] == "POST" and call[1] == "repositories")
+        repository_payload = repository_create[2][0]  # type: ignore[index]
+        self.assertEqual(repository_payload["owner_id"], "user-id")
+        self.assertEqual(repository_payload["repo_url"], "owner/repo")
 
     @patch.dict(
         os.environ,

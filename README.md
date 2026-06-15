@@ -32,12 +32,14 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 - Generates a Markdown review report and optional JSON output.
 - Can persist review history to Supabase/Postgres and classify findings as new, existing, or resolved across runs.
 - Supports Supabase email/password login for the web UI, with authenticated review history saved per user.
+- Provides a signed-in project detail view with latest score, top risks, AI summary, issue backlog, run history, and score trends.
 - Supports English and Simplified Chinese report output.
 - Includes a custom `RepoReviewAgent` that uses a traceable tool-calling loop.
 - Includes an OpenAI Responses API function-calling agent where the model calls repository tools.
 - Adds an optional AI review section through OpenAI, OpenRouter, or local Ollama.
 - Keeps AI synthesis evidence-bound with shared prompt-tuning guidance and few-shot JSON examples.
 - Creates GitHub issue drafts, can create GitHub issues, and can post pull request comments.
+- Includes a GitHub Actions PR bot that compares PRs against the base branch, comments on new risks, scans `main` on a schedule, and blocks CI on high-severity findings.
 - Provides optional Docker, FastAPI, and MCP server entry points.
 - Includes production deployment examples for Docker Compose, Nginx, HTTPS, and public demo controls.
 - Includes unit tests and a GitHub Actions workflow.
@@ -150,6 +152,7 @@ repo-review . --agent --report-language zh-CN --output review-report.zh.md
 Save review history to Supabase:
 
 1. Open your Supabase SQL Editor and run [`supabase/schema.sql`](supabase/schema.sql).
+   If you created the project with an earlier version of this schema, run it again. It removes the old global `repo_url` uniqueness rule and replaces it with per-user repository isolation.
 2. Set server-side environment variables:
 
 ```bash
@@ -164,7 +167,7 @@ export SUPABASE_SERVICE_ROLE_KEY="your_service_role_key"
 repo-review https://github.com/owner/repo --save-history --output review-report.md
 ```
 
-The history store saves repositories, review runs, findings, AI review sections, health score, and a diff against the previous run. The service role key must stay in trusted CLI/server environments; do not expose it in browser code.
+The history store saves repositories, review runs, findings, AI review sections, health score, and a diff against the previous run. Signed-in users get separate history rows even when they scan the same repository URL. The service role key must stay in trusted CLI/server environments; do not expose it in browser code.
 
 Enable Supabase login in the web UI:
 
@@ -187,7 +190,9 @@ cd ..
 repo-review-web
 ```
 
-When a user signs in, the frontend sends their Supabase access token to the FastAPI backend. The backend verifies the token with Supabase Auth and saves review history with the authenticated `owner_id`. Set `REPO_REVIEW_REQUIRE_AUTH=true` when you want the web API to reject anonymous review requests.
+When a user signs in, the frontend sends their Supabase access token to the FastAPI backend. The frontend refreshes expiring sessions before loading history or saving a review, and the backend verifies the token with Supabase Auth before saving review history with the authenticated `owner_id`. Set `REPO_REVIEW_REQUIRE_AUTH=true` when you want the web API to reject anonymous review requests.
+
+After signing in and saving at least one review, the web UI shows a project detail workspace for each repository. It includes the latest health score, new/existing/resolved finding counts, top risks, AI summary, issue backlog, historical runs, and a compact score trend.
 
 Preview GitHub issues from findings:
 
@@ -208,11 +213,38 @@ Preview a pull request comment:
 repo-review https://github.com/owner/repo --agent --github-pr-comment 12
 ```
 
-Post a pull request comment:
+Post or update a pull request comment:
 
 ```bash
 export GITHUB_TOKEN="your_github_token"
-repo-review https://github.com/owner/repo --agent --github-pr-comment 12 --github-pr-comment-mode create
+repo-review https://github.com/owner/repo --agent --github-pr-comment 12 --github-pr-comment-mode upsert
+```
+
+Run the PR bot locally against two generated reports:
+
+```bash
+repo-review ../base-checkout --json baseline-report.json --output baseline-report.md
+repo-review . --json review-report.json --output review-report.md
+repo-review-pr-bot \
+  --report-json review-report.json \
+  --baseline-json baseline-report.json \
+  --comment-mode dry-run \
+  --fail-on-severity high
+```
+
+The `.github/workflows/repo-review-bot.yml` workflow runs this automatically. On pull requests it reviews the PR head against the base branch, updates one sticky review comment with newly introduced findings when the PR comes from the same repository, and fails CI when a new high-severity finding appears. On scheduled `main` scans it fails when any high-severity finding exists.
+
+To post or update the PR bot comment locally:
+
+```bash
+export GITHUB_TOKEN="your_github_token"
+repo-review-pr-bot \
+  --report-json review-report.json \
+  --baseline-json baseline-report.json \
+  --github-repo owner/repo \
+  --pr-number 12 \
+  --comment-mode upsert \
+  --fail-on-severity high
 ```
 
 Enable the OpenAI AI layer:

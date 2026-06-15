@@ -7,12 +7,17 @@ create extension if not exists pgcrypto;
 create table if not exists public.repositories (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid references auth.users(id) on delete set null,
-  repo_url text not null unique,
+  repo_url text not null,
   repo_name text not null,
   default_branch text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Earlier versions used a global unique constraint on repo_url. That works for a
+-- single-user portfolio demo, but a SaaS/demo with login needs each user to own
+-- an independent history for the same repository URL.
+alter table public.repositories drop constraint if exists repositories_repo_url_key;
 
 create table if not exists public.review_runs (
   id uuid primary key default gen_random_uuid(),
@@ -61,6 +66,14 @@ create table if not exists public.ai_reviews (
 
 create index if not exists review_runs_repository_created_idx
   on public.review_runs (repository_id, created_at desc);
+
+create unique index if not exists repositories_owner_repo_url_unique_idx
+  on public.repositories (owner_id, repo_url)
+  where owner_id is not null;
+
+create unique index if not exists repositories_anonymous_repo_url_unique_idx
+  on public.repositories (repo_url)
+  where owner_id is null;
 
 create index if not exists findings_review_run_status_idx
   on public.findings (review_run_id, status);

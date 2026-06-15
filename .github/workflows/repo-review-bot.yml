@@ -1,0 +1,104 @@
+name: Repo Review Bot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: "30 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  pr-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          persist-credentials: false
+
+      - name: Checkout PR base
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install review agent
+        working-directory: base
+        run: python -m pip install -e .
+
+      - name: Analyze base branch
+        run: repo-review ./base --json baseline-report.json --output baseline-report.md --max-files 1000
+
+      - name: Analyze PR branch
+        run: repo-review ./head --json review-report.json --output review-report.md --max-files 1000
+
+      - name: Comment on new PR risks and enforce high-risk gate
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          repo-review-pr-bot
+          --report-json review-report.json
+          --baseline-json baseline-report.json
+          --github-repo "${{ github.repository }}"
+          --pr-number "${{ github.event.pull_request.number }}"
+          --comment-mode upsert
+          --fail-on-severity high
+          --block-scope new
+
+      - name: Enforce high-risk gate for forked PRs
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: >-
+          repo-review-pr-bot
+          --report-json review-report.json
+          --baseline-json baseline-report.json
+          --comment-mode dry-run
+          --fail-on-severity high
+          --block-scope new
+
+  main-scheduled-scan:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install review agent
+        run: python -m pip install -e .
+
+      - name: Analyze main branch
+        run: repo-review . --json review-report.json --output review-report.md --max-files 1000
+
+      - name: Enforce high-risk gate on main
+        run: >-
+          repo-review-pr-bot
+          --report-json review-report.json
+          --comment-mode none
+          --fail-on-severity high
+          --block-scope all

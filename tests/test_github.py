@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
 from repo_review_agent.github import (
+    DEFAULT_PR_COMMENT_MARKER,
     GitHubClient,
     GitHubIntegrationError,
     IssueDraft,
@@ -102,6 +103,7 @@ class GitHubIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result["pr_number"], 12)
         self.assertIn("Repository Review Agent", result["body"])
+        self.assertIn(DEFAULT_PR_COMMENT_MARKER, result["body"])
         self.assertIn("Add a CI workflow", result["body"])
         self.assertIn("Files: `src/app.py`.", result["body"])
 
@@ -180,6 +182,67 @@ class GitHubIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result["html_url"], "https://github.com/owner/repo/pull/12#comment")
         mock_create_comment.assert_called_once()
+
+    @patch("repo_review_agent.github.GitHubClient.upsert_issue_comment")
+    def test_upsert_pr_comment_mode_uses_client(self, mock_upsert_comment) -> None:
+        mock_upsert_comment.return_value = (
+            "updated",
+            {"html_url": "https://github.com/owner/repo/pull/12#comment"},
+        )
+
+        result = apply_github_pr_comment_mode(
+            report=sample_report(),
+            repo="owner/repo",
+            pr_number=12,
+            mode="upsert",
+            token="test-token",
+        )
+
+        self.assertEqual(result["action"], "updated")
+        self.assertEqual(result["html_url"], "https://github.com/owner/repo/pull/12#comment")
+        mock_upsert_comment.assert_called_once()
+
+    def test_upsert_issue_comment_updates_existing_marked_comment(self) -> None:
+        client = GitHubClient(token="token")
+        client.list_issue_comments = MagicMock(  # type: ignore[method-assign]
+            return_value=[{"id": 99, "body": f"{DEFAULT_PR_COMMENT_MARKER}\nold"}]
+        )
+        client.update_issue_comment = MagicMock(  # type: ignore[method-assign]
+            return_value={"html_url": "https://github.com/owner/repo/pull/12#comment"}
+        )
+        client.create_issue_comment = MagicMock()  # type: ignore[method-assign]
+
+        action, response = client.upsert_issue_comment(
+            "owner/repo",
+            12,
+            "new body",
+            marker=DEFAULT_PR_COMMENT_MARKER,
+        )
+
+        self.assertEqual(action, "updated")
+        self.assertEqual(response["html_url"], "https://github.com/owner/repo/pull/12#comment")
+        client.update_issue_comment.assert_called_once()
+        client.create_issue_comment.assert_not_called()
+
+    def test_upsert_issue_comment_creates_when_marker_is_missing(self) -> None:
+        client = GitHubClient(token="token")
+        client.list_issue_comments = MagicMock(return_value=[])  # type: ignore[method-assign]
+        client.update_issue_comment = MagicMock()  # type: ignore[method-assign]
+        client.create_issue_comment = MagicMock(  # type: ignore[method-assign]
+            return_value={"html_url": "https://github.com/owner/repo/pull/12#comment"}
+        )
+
+        action, _response = client.upsert_issue_comment(
+            "owner/repo",
+            12,
+            "new body",
+            marker=DEFAULT_PR_COMMENT_MARKER,
+        )
+
+        self.assertEqual(action, "created")
+        created_body = client.create_issue_comment.call_args.args[2]
+        self.assertIn(DEFAULT_PR_COMMENT_MARKER, created_body)
+        client.update_issue_comment.assert_not_called()
 
     def test_unknown_github_modes_return_empty_results(self) -> None:
         self.assertEqual(

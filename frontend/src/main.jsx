@@ -9,9 +9,12 @@ import {
   Clipboard,
   Download,
   FileText,
+  GitBranch,
   LogIn,
   LogOut,
+  RefreshCw,
   RotateCcw,
+  TrendingUp,
   UserRound,
   X
 } from "lucide-react";
@@ -20,6 +23,7 @@ import {
   clearStoredSession,
   consumeSessionFromUrl,
   getCurrentUser,
+  getValidSession,
   isAuthConfigured,
   loadStoredSession,
   saveStoredSession,
@@ -29,6 +33,7 @@ import {
 } from "./authClient";
 import { DEFAULT_TARGET, MODEL_OPTIONS, progressCopy } from "./config";
 import { buildDemoReport } from "./demoReport";
+import { fetchProjectDetail, fetchRepositories } from "./historyClient";
 import { renderStaticMarkdown } from "./reportMarkdown";
 import { reportCopy } from "./reportCopy";
 import "./styles.css";
@@ -49,6 +54,11 @@ function App() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [authSession, setAuthSession] = useState(() => loadStoredSession());
   const [authStatus, setAuthStatus] = useState("");
+  const [repositories, setRepositories] = useState([]);
+  const [selectedRepository, setSelectedRepository] = useState(null);
+  const [projectDetail, setProjectDetail] = useState(null);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const reportRef = useRef(null);
 
   const selectedModelValue = useMemo(() => {
@@ -70,10 +80,16 @@ function App() {
 
     setAuthSession(session);
     let isMounted = true;
-    getCurrentUser(session.access_token)
+    getValidSession(session)
+      .then((validSession) => {
+        if (!validSession?.access_token) {
+          throw new Error(isChinese ? "登录已过期，请重新登录。" : "Session expired. Sign in again.");
+        }
+        return getCurrentUser(validSession.access_token).then((user) => ({ validSession, user }));
+      })
       .then((user) => {
         if (!isMounted) return;
-        const nextSession = { ...session, user };
+        const nextSession = { ...user.validSession, user: user.user };
         saveStoredSession(nextSession);
         setAuthSession(nextSession);
       })
@@ -87,6 +103,21 @@ function App() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authSession?.access_token) {
+      setRepositories([]);
+      setSelectedRepository(null);
+      setProjectDetail(null);
+      return undefined;
+    }
+
+    let isMounted = true;
+    loadProjectList(authSession.access_token, { silent: true, isMountedRef: () => isMounted });
+    return () => {
+      isMounted = false;
+    };
+  }, [authSession?.access_token]);
 
   useEffect(() => {
     if (!isRunning) return undefined;
@@ -150,9 +181,93 @@ function App() {
   };
 
   const handleSignOut = async () => {
-    await signOut(authSession?.access_token);
-    setAuthSession(null);
-    setAuthStatus(isChinese ? "已退出登录。" : "Signed out.");
+    try {
+      await signOut(authSession?.access_token);
+    } finally {
+      setAuthSession(null);
+      setRepositories([]);
+      setSelectedRepository(null);
+      setProjectDetail(null);
+      setAuthStatus(isChinese ? "已退出登录。" : "Signed out.");
+    }
+  };
+
+  const ensureFreshSession = async (session = authSession) => {
+    if (!session?.access_token) return null;
+    try {
+      const nextSession = await getValidSession(session);
+      if (!nextSession?.access_token) {
+        setAuthSession(null);
+        setRepositories([]);
+        setSelectedRepository(null);
+        setProjectDetail(null);
+        setAuthStatus(isChinese ? "登录已过期，请重新登录。" : "Session expired. Sign in again.");
+        return null;
+      }
+      if (nextSession.access_token !== session.access_token) {
+        const user = nextSession.user || session.user || (await getCurrentUser(nextSession.access_token));
+        const refreshedSession = { ...nextSession, user };
+        saveStoredSession(refreshedSession);
+        setAuthSession(refreshedSession);
+        return refreshedSession;
+      }
+      return nextSession;
+    } catch (error) {
+      clearStoredSession();
+      setAuthSession(null);
+      setRepositories([]);
+      setSelectedRepository(null);
+      setProjectDetail(null);
+      setAuthStatus(error.message);
+      return null;
+    }
+  };
+
+  const loadProjectList = async (
+    accessToken = authSession?.access_token,
+    { silent = false, isMountedRef = () => true } = {}
+  ) => {
+    const session = await ensureFreshSession(
+      accessToken === authSession?.access_token ? authSession : { access_token: accessToken }
+    );
+    if (!session?.access_token) return;
+    if (!silent) {
+      setIsHistoryLoading(true);
+    }
+    setHistoryError("");
+    try {
+      const nextRepositories = await fetchRepositories(session.access_token);
+      if (!isMountedRef()) return;
+      setRepositories(nextRepositories);
+    } catch (error) {
+      if (!isMountedRef()) return;
+      setHistoryError(error.message);
+    } finally {
+      if (!silent && isMountedRef()) {
+        setIsHistoryLoading(false);
+      }
+    }
+  };
+
+  const openProjectDetail = async (repository) => {
+    if (!authSession?.access_token) return;
+    const session = await ensureFreshSession();
+    if (!session?.access_token) return;
+    setSelectedRepository(repository);
+    setProjectDetail(null);
+    setHistoryError("");
+    setIsHistoryLoading(true);
+    try {
+      const detail = await fetchProjectDetail(repository.id, session.access_token);
+      setProjectDetail(detail);
+      window.requestAnimationFrame(() => {
+        document.getElementById("project-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    } catch (error) {
+      setHistoryError(error.message);
+    } finally {
+      setIsHistoryLoading(false);
+    }
   };
 
   const runReview = async (event) => {
@@ -163,11 +278,18 @@ function App() {
     setStatus(isChinese ? "评审已开始，正在连接后端..." : "Review started. Connecting to backend...");
     setMarkdown("");
     setReport(null);
+    const hadSession = Boolean(authSession?.access_token);
+    const session = await ensureFreshSession();
+    if (hadSession && !session?.access_token) {
+      setIsRunning(false);
+      setStatus(isChinese ? "登录已过期，请重新登录后再保存历史。" : "Session expired. Sign in again to save history.");
+      return;
+    }
 
     const payload = {
       ...form,
       ai_model: form.ai_model.trim() || null,
-      save_history: Boolean(authSession?.access_token),
+      save_history: Boolean(session?.access_token),
       history_repo_url: form.target.trim() || null
     };
 
@@ -176,8 +298,8 @@ function App() {
       if (authConfig.apiToken) {
         headers["X-Repo-Review-Token"] = authConfig.apiToken;
       }
-      if (authSession?.access_token) {
-        headers.Authorization = `Bearer ${authSession.access_token}`;
+      if (session?.access_token) {
+        headers.Authorization = `Bearer ${session.access_token}`;
       }
       const response = await fetch("/review", {
         method: "POST",
@@ -211,6 +333,9 @@ function App() {
             : `Review complete. History saved with ${data.history.new_findings_count} new and ${data.history.resolved_findings_count} resolved findings.`
           : "Review complete."
       );
+      if (data.history && session?.access_token) {
+        loadProjectList(session.access_token, { silent: true });
+      }
       window.requestAnimationFrame(() => {
         reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -358,6 +483,16 @@ function App() {
               <FileText size={17} aria-hidden="true" />
               Demo
             </button>
+            {authSession?.access_token ? (
+              <button
+                className="demo-button"
+                type="button"
+                onClick={() => loadProjectList(authSession.access_token)}
+              >
+                <RefreshCw size={17} aria-hidden="true" />
+                {isChinese ? "刷新历史" : "Refresh history"}
+              </button>
+            ) : null}
           </div>
 
           <p className="home-status" aria-live="polite">
@@ -369,6 +504,19 @@ function App() {
           </p>
         </form>
       </section>
+
+      {authSession?.access_token ? (
+        <ProjectHistoryWorkspace
+          repositories={repositories}
+          selectedRepository={selectedRepository}
+          detail={projectDetail}
+          isLoading={isHistoryLoading}
+          error={historyError}
+          language={form.report_language}
+          onOpenProject={openProjectDetail}
+          onRefresh={() => loadProjectList(authSession.access_token)}
+        />
+      ) : null}
 
       {markdown ? (
         <div className="report-shell">
@@ -481,6 +629,248 @@ function AuthPanel({ configured, session, status, language, onSignIn, onSignUp, 
       {error || status ? <p className={error ? "auth-error" : "auth-status"}>{error || status}</p> : null}
     </form>
   );
+}
+
+function ProjectHistoryWorkspace({
+  repositories,
+  selectedRepository,
+  detail,
+  isLoading,
+  error,
+  language,
+  onOpenProject,
+  onRefresh
+}) {
+  const isChinese = language === "zh-CN";
+  const copy = {
+    heading: isChinese ? "项目详情" : "Project details",
+    subheading: isChinese
+      ? "登录后的仓库历史会出现在这里。"
+      : "Signed-in repository history appears here.",
+    noProjects: isChinese ? "还没有保存过历史扫描。" : "No saved review history yet.",
+    recentScore: isChinese ? "最近评分" : "Latest score",
+    topRisks: isChinese ? "主要风险" : "Top risks",
+    aiSummary: isChinese ? "AI 总结" : "AI summary",
+    issueBacklog: isChinese ? "Issue 待办" : "Issue backlog",
+    historyRuns: isChinese ? "历史扫描" : "History runs",
+    trend: isChinese ? "趋势变化" : "Trend",
+    open: isChinese ? "打开" : "Open",
+    refresh: isChinese ? "刷新" : "Refresh",
+    noRisks: isChinese ? "最近一次扫描没有重点风险。" : "The latest run has no priority risks.",
+    noAi: isChinese ? "最近一次扫描没有 AI 总结。" : "No AI summary was saved for the latest run.",
+    noIssues: isChinese ? "暂无需要创建的 Issue。" : "No immediate issue suggestions.",
+    noRuns: isChinese ? "还没有历史扫描。" : "No historical runs yet.",
+    newFindings: isChinese ? "新增" : "New",
+    existingFindings: isChinese ? "持续" : "Existing",
+    resolvedFindings: isChinese ? "已解决" : "Resolved",
+    generated: isChinese ? "扫描时间" : "Scanned"
+  };
+  const latestRun = detail?.latestRun;
+  const topRisks = (detail?.findings ?? []).filter((finding) =>
+    importantSeverity.has((finding.severity || "info").toLowerCase())
+  );
+  const issueBacklog = (detail?.findings ?? []).filter(
+    (finding) => (finding.severity || "info").toLowerCase() !== "info"
+  );
+
+  return (
+    <section className="project-workspace" id="project-detail">
+      <div className="project-workspace-head">
+        <div>
+          <p className="project-eyebrow">{copy.heading}</p>
+          <h2>{selectedRepository?.repo_name || copy.subheading}</h2>
+        </div>
+        <button className="action-button" type="button" onClick={onRefresh} disabled={isLoading}>
+          <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} aria-hidden="true" />
+          {copy.refresh}
+        </button>
+      </div>
+
+      {error ? <p className="project-error">{error}</p> : null}
+
+      <div className="project-layout">
+        <aside className="project-list" aria-label={copy.heading}>
+          {repositories.length ? (
+            repositories.map((repository) => (
+              <button
+                key={repository.id}
+                className={`project-list-item ${
+                  selectedRepository?.id === repository.id ? "active" : ""
+                }`}
+                type="button"
+                onClick={() => onOpenProject(repository)}
+              >
+                <strong>{repository.repo_name}</strong>
+                <span>{repository.repo_url}</span>
+              </button>
+            ))
+          ) : (
+            <p className="project-empty">{copy.noProjects}</p>
+          )}
+        </aside>
+
+        <div className="project-detail-panel">
+          {!selectedRepository ? (
+            <p className="project-empty">{copy.subheading}</p>
+          ) : isLoading && !detail ? (
+            <div className="project-loading">
+              <RotateCcw size={18} className="animate-spin" aria-hidden="true" />
+              <span>{isChinese ? "正在加载项目详情..." : "Loading project details..."}</span>
+            </div>
+          ) : (
+            <>
+              <div className="project-summary-grid">
+                <MetricTile label={copy.recentScore} value={latestRun?.health_score ?? "--"} />
+                <MetricTile label={copy.newFindings} value={latestRun?.new_findings_count ?? 0} />
+                <MetricTile label={copy.existingFindings} value={latestRun?.existing_findings_count ?? 0} />
+                <MetricTile label={copy.resolvedFindings} value={latestRun?.resolved_findings_count ?? 0} />
+              </div>
+
+              <div className="project-two-column">
+                <DetailCard
+                  title={copy.trend}
+                  icon={<TrendingUp size={18} aria-hidden="true" />}
+                >
+                  <ScoreTrend runs={detail?.runs ?? []} emptyText={copy.noRuns} />
+                </DetailCard>
+
+                <DetailCard
+                  title={copy.aiSummary}
+                  icon={<CheckCircle2 size={18} aria-hidden="true" />}
+                >
+                  {detail?.aiReview?.summary ? (
+                    <MarkdownSummary text={detail.aiReview.summary} />
+                  ) : (
+                    <p className="project-muted">{copy.noAi}</p>
+                  )}
+                </DetailCard>
+              </div>
+
+              <DetailCard
+                title={copy.topRisks}
+                icon={<AlertTriangle size={18} aria-hidden="true" />}
+              >
+                {topRisks.length ? (
+                  <div className="project-risk-list">
+                    {topRisks.slice(0, 5).map((finding) => (
+                      <HistoryFindingCard key={finding.fingerprint} finding={finding} />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="project-muted">{copy.noRisks}</p>
+                )}
+              </DetailCard>
+
+              <div className="project-two-column">
+                <DetailCard
+                  title={copy.issueBacklog}
+                  icon={<FileText size={18} aria-hidden="true" />}
+                >
+                  {issueBacklog.length ? (
+                    <ul className="project-issue-list">
+                      {issueBacklog.slice(0, 6).map((finding) => (
+                        <li key={finding.fingerprint}>
+                          <strong>{finding.title}</strong>
+                          <span>{finding.recommendation}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="project-muted">{copy.noIssues}</p>
+                  )}
+                </DetailCard>
+
+                <DetailCard
+                  title={copy.historyRuns}
+                  icon={<GitBranch size={18} aria-hidden="true" />}
+                >
+                  {detail?.runs?.length ? (
+                    <ol className="project-run-list">
+                      {detail.runs.map((run) => (
+                        <li key={run.id}>
+                          <div>
+                            <strong>{copy.generated}: {formatDate(run.created_at)}</strong>
+                            <span>{run.branch || "main"} {run.commit_sha ? `· ${run.commit_sha.slice(0, 7)}` : ""}</span>
+                          </div>
+                          <Badge tone={scoreTone(run.health_score)}>{run.health_score ?? "--"}</Badge>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="project-muted">{copy.noRuns}</p>
+                  )}
+                </DetailCard>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MetricTile({ label, value }) {
+  return (
+    <div className="project-metric-tile">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function DetailCard({ title, icon, children }) {
+  return (
+    <article className="project-detail-card">
+      <header>
+        {icon}
+        <h3>{title}</h3>
+      </header>
+      {children}
+    </article>
+  );
+}
+
+function ScoreTrend({ runs, emptyText }) {
+  if (!runs.length) {
+    return <p className="project-muted">{emptyText}</p>;
+  }
+  const orderedRuns = [...runs].reverse();
+  return (
+    <div className="score-trend" role="list">
+      {orderedRuns.map((run) => {
+        const score = typeof run.health_score === "number" ? run.health_score : 0;
+        return (
+          <div className="score-trend-item" key={run.id} role="listitem">
+            <span className="score-bar" style={{ height: `${Math.max(8, score)}%` }} />
+            <strong>{score}</strong>
+            <small>{formatShortDate(run.created_at)}</small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function HistoryFindingCard({ finding }) {
+  const severity = (finding.severity || "info").toLowerCase();
+  return (
+    <article className="history-finding-card">
+      <div>
+        <h4>{finding.title}</h4>
+        <p>{finding.recommendation}</p>
+        {(finding.evidence_paths_json ?? []).length ? (
+          <small>{finding.evidence_paths_json.slice(0, 3).join(", ")}</small>
+        ) : null}
+      </div>
+      <Badge tone={severity}>{severity}</Badge>
+    </article>
+  );
+}
+
+function scoreTone(score) {
+  if (score >= 85) return "success";
+  if (score >= 70) return "warning";
+  return "error";
 }
 
 const severityStyles = {

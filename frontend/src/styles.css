@@ -584,6 +584,303 @@
     padding: 0 24px 56px;
   }
 
+  .project-workspace {
+    margin: -96px auto 72px;
+    max-width: 1180px;
+    padding: 0 24px;
+  }
+
+  .project-workspace-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: end;
+    margin-bottom: 14px;
+  }
+
+  .project-workspace-head h2 {
+    margin: 3px 0 0;
+    color: #111113;
+    font-size: 28px;
+    font-weight: 850;
+    line-height: 1.12;
+    letter-spacing: 0;
+  }
+
+  .project-eyebrow {
+    margin: 0;
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 850;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .project-error {
+    margin: 0 0 12px;
+    border-radius: 8px;
+    border: 1px solid #fecaca;
+    background: #fef2f2;
+    padding: 10px 12px;
+    color: #991b1b;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .project-layout {
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+
+  .project-list,
+  .project-detail-panel {
+    border: 1px solid #e1e5ea;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+  }
+
+  .project-list {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .project-list-item {
+    display: grid;
+    width: 100%;
+    min-height: 74px;
+    gap: 5px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    padding: 12px;
+    text-align: left;
+    transition: background 160ms ease, border-color 160ms ease;
+  }
+
+  .project-list-item:hover,
+  .project-list-item.active {
+    border-color: #d8dde5;
+    background: #f7f8fa;
+  }
+
+  .project-list-item strong {
+    overflow: hidden;
+    color: #111113;
+    font-size: 14px;
+    font-weight: 850;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-list-item span {
+    overflow: hidden;
+    color: #6b7280;
+    font-size: 12px;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-detail-panel {
+    min-height: 280px;
+    padding: 14px;
+  }
+
+  .project-empty,
+  .project-muted {
+    margin: 0;
+    color: #6b7280;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .project-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    color: #111113;
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  .project-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .project-metric-tile {
+    min-height: 92px;
+    border-radius: 8px;
+    border: 1px solid #e3e7ed;
+    background: #f9fafb;
+    padding: 13px;
+  }
+
+  .project-metric-tile span {
+    display: block;
+    color: #6b7280;
+    font-size: 11px;
+    font-weight: 850;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .project-metric-tile strong {
+    display: block;
+    margin-top: 15px;
+    color: #111113;
+    font-size: 34px;
+    font-weight: 850;
+    line-height: 1;
+    letter-spacing: 0;
+  }
+
+  .project-two-column {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .project-detail-card {
+    border: 1px solid #e3e7ed;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 14px;
+  }
+
+  .project-detail-card + .project-detail-card,
+  .project-two-column + .project-detail-card {
+    margin-top: 12px;
+  }
+
+  .project-detail-card header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    color: #111113;
+  }
+
+  .project-detail-card h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 850;
+    line-height: 1.25;
+    letter-spacing: 0;
+  }
+
+  .project-risk-list,
+  .project-issue-list,
+  .project-run-list {
+    display: grid;
+    gap: 9px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .history-finding-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+    border-radius: 7px;
+    border: 1px solid #edf0f4;
+    background: #fafafa;
+    padding: 12px;
+  }
+
+  .history-finding-card h4,
+  .project-issue-list strong,
+  .project-run-list strong {
+    margin: 0;
+    color: #111113;
+    font-size: 14px;
+    font-weight: 850;
+    line-height: 1.35;
+    letter-spacing: 0;
+  }
+
+  .history-finding-card p,
+  .project-issue-list span,
+  .project-run-list span {
+    display: block;
+    margin-top: 5px;
+    color: #4b5563;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .history-finding-card small {
+    display: block;
+    margin-top: 7px;
+    color: #6b7280;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .project-issue-list li,
+  .project-run-list li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+    border-radius: 7px;
+    background: #f9fafb;
+    padding: 11px;
+  }
+
+  .score-trend {
+    display: grid;
+    min-height: 180px;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(42px, 1fr);
+    gap: 9px;
+    align-items: end;
+    overflow-x: auto;
+    padding-top: 10px;
+  }
+
+  .score-trend-item {
+    display: grid;
+    min-width: 42px;
+    height: 170px;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    gap: 5px;
+    justify-items: center;
+    color: #4b5563;
+  }
+
+  .score-bar {
+    align-self: end;
+    width: 100%;
+    max-width: 36px;
+    border-radius: 999px 999px 3px 3px;
+    background: #111113;
+  }
+
+  .score-trend-item strong {
+    color: #111113;
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1;
+  }
+
+  .score-trend-item small {
+    color: #6b7280;
+    font-size: 11px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
   .field-label {
     @apply mb-1.5 block text-sm font-bold text-ink;
   }
@@ -856,5 +1153,41 @@
 
   .report-shell {
     padding-inline: 12px;
+  }
+
+  .project-workspace {
+    margin-top: -42px;
+    padding-inline: 12px;
+  }
+
+  .project-workspace-head {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .project-layout,
+  .project-two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .project-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-detail-panel {
+    padding: 10px;
+  }
+
+  .project-metric-tile {
+    min-height: 78px;
+  }
+
+  .project-metric-tile strong {
+    margin-top: 10px;
+    font-size: 28px;
+  }
+
+  .score-trend {
+    grid-auto-columns: minmax(38px, 1fr);
   }
 }

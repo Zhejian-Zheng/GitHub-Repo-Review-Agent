@@ -243,9 +243,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--github-pr-comment-mode",
-        choices=["dry-run", "create"],
+        choices=["dry-run", "create", "upsert"],
         default="dry-run",
-        help="Whether PR comment mode should preview or create the comment.",
+        help="Whether PR comment mode should preview, create, or update the sticky comment.",
     )
     parser.add_argument("--max-files", type=int, default=500, help="Maximum number of files to scan")
     parser.add_argument(

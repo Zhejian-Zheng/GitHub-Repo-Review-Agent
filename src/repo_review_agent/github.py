@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from .models import Finding, ReviewReport
 
 GITHUB_API_URL = "https://api.github.com"
+DEFAULT_PR_COMMENT_MARKER = "<!-- repo-review-agent:pr-comment -->"
 
 
 class GitHubIntegrationError(RuntimeError):
@@ -129,25 +130,67 @@ class GitHubClient:
         }
         if draft.labels:
             payload["labels"] = draft.labels
-        return self._request_json("POST", f"/repos/{repo}/issues", payload)
+        return self._request_dict("POST", f"/repos/{repo}/issues", payload)
 
     def create_issue_comment(self, repo: str, issue_number: int, body: str) -> dict[str, Any]:
-        return self._request_json(
+        return self._request_dict(
             "POST",
             f"/repos/{repo}/issues/{issue_number}/comments",
             {"body": body},
         )
 
+    def list_issue_comments(self, repo: str, issue_number: int) -> list[dict[str, Any]]:
+        comments = self._request_list(
+            "GET",
+            f"/repos/{repo}/issues/{issue_number}/comments?per_page=100",
+        )
+        return [comment for comment in comments if isinstance(comment, dict)]
+
+    def update_issue_comment(self, repo: str, comment_id: int, body: str) -> dict[str, Any]:
+        return self._request_dict(
+            "PATCH",
+            f"/repos/{repo}/issues/comments/{comment_id}",
+            {"body": body},
+        )
+
+    def upsert_issue_comment(
+        self,
+        repo: str,
+        issue_number: int,
+        body: str,
+        *,
+        marker: str,
+    ) -> tuple[str, dict[str, Any]]:
+        marked_body = ensure_comment_marker(body, marker)
+        existing_comment = self.find_issue_comment(repo, issue_number, marker)
+        if existing_comment is not None:
+            comment_id = existing_comment.get("id")
+            if isinstance(comment_id, int):
+                return "updated", self.update_issue_comment(repo, comment_id, marked_body)
+        return "created", self.create_issue_comment(repo, issue_number, marked_body)
+
+    def find_issue_comment(
+        self,
+        repo: str,
+        issue_number: int,
+        marker: str,
+    ) -> dict[str, Any] | None:
+        for comment in self.list_issue_comments(repo, issue_number):
+            if marker in str(comment.get("body", "")):
+                return comment
+        return None
+
     def _request_json(
         self,
         method: str,
         path: str,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
+        payload: dict[str, Any] | None = None,
+    ) -> Any:
         token = self.require_token()
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = Request(
             f"{self.api_url}{path}",
-            data=json.dumps(payload).encode("utf-8"),
+            data=data,
             headers={
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {token}",
@@ -171,7 +214,27 @@ class GitHubClient:
         except json.JSONDecodeError as exc:
             raise GitHubIntegrationError(f"GitHub API returned invalid JSON: {body[:500]}") from exc
 
+        return data
+
+    def _request_dict(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        data = self._request_json(method, path, payload)
         if not isinstance(data, dict):
+            raise GitHubIntegrationError("GitHub API returned an unexpected response.")
+        return data
+
+    def _request_list(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> list[Any]:
+        data = self._request_json(method, path, payload)
+        if not isinstance(data, list):
             raise GitHubIntegrationError("GitHub API returned an unexpected response.")
         return data
 
@@ -212,7 +275,7 @@ def apply_github_pr_comment_mode(
     mode: str,
     token: str | None = None,
 ) -> dict[str, Any]:
-    body = build_pr_comment_body(report)
+    body = ensure_comment_marker(build_pr_comment_body(report), DEFAULT_PR_COMMENT_MARKER)
     if mode == "dry-run":
         return {"mode": "dry-run", "repo": repo, "pr_number": pr_number, "body": body}
     if mode == "create":
@@ -224,4 +287,25 @@ def apply_github_pr_comment_mode(
             "pr_number": pr_number,
             "html_url": response.get("html_url"),
         }
+    if mode == "upsert":
+        client = GitHubClient(token=token)
+        action, response = client.upsert_issue_comment(
+            repo,
+            pr_number,
+            body,
+            marker=DEFAULT_PR_COMMENT_MARKER,
+        )
+        return {
+            "mode": "upsert",
+            "action": action,
+            "repo": repo,
+            "pr_number": pr_number,
+            "html_url": response.get("html_url"),
+        }
     return {}
+
+
+def ensure_comment_marker(body: str, marker: str) -> str:
+    if marker in body:
+        return body
+    return f"{marker}\n{body}"

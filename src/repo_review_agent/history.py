@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from .models import Finding, ReviewReport
@@ -224,12 +225,34 @@ class SupabaseHistoryStore:
         }
         if owner_id:
             payload["owner_id"] = owner_id
+
+        existing = self._find_repository(repo_url=repo_url, owner_id=owner_id)
+        if existing:
+            repository_id = _require_id(existing, "repository")
+            rows = self._request(
+                "PATCH",
+                f"repositories?id=eq.{_url_value(repository_id)}",
+                payload,
+                prefer="return=representation",
+            )
+            return _first_row(rows, "repository")
+
+        rows = self._request("POST", "repositories", [payload], prefer="return=representation")
+        return _first_row(rows, "repository")
+
+    def _find_repository(self, *, repo_url: str, owner_id: str | None) -> dict[str, Any] | None:
         rows = self._request(
-            "POST",
-            "repositories?on_conflict=repo_url",
-            [payload],
-            prefer="resolution=merge-duplicates,return=representation",
+            "GET",
+            (
+                "repositories"
+                f"?repo_url=eq.{_url_value(repo_url)}"
+                f"&owner_id={_owner_filter(owner_id)}"
+                "&select=id,repo_url,owner_id,repo_name,default_branch"
+                "&limit=1"
+            ),
         )
+        if not rows:
+            return None
         return _first_row(rows, "repository")
 
     def _latest_findings(self, repository_id: str) -> list[FindingSnapshot]:
@@ -347,7 +370,7 @@ class SupabaseHistoryStore:
         self,
         method: str,
         path: str,
-        body: list[dict[str, Any]] | None = None,
+        body: dict[str, Any] | list[dict[str, Any]] | None = None,
         *,
         prefer: str | None = None,
     ) -> Any:
@@ -393,3 +416,11 @@ def _require_id(row: dict[str, Any], label: str) -> str:
     if not isinstance(value, str) or not value:
         raise HistoryStoreError(f"Supabase {label} row did not include an id.")
     return value
+
+
+def _url_value(value: str) -> str:
+    return quote(value, safe="")
+
+
+def _owner_filter(owner_id: str | None) -> str:
+    return f"eq.{_url_value(owner_id)}" if owner_id else "is.null"
