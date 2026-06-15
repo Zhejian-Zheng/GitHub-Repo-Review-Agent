@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from .agent import RepoReviewAgent
 from .analyzer import analyze_repository
+from .chatgpt_agent import ChatGPTReviewAgent
 from .function_agent import OpenAIFunctionCallingAgent
 from .github import (
     GitHubIntegrationError,
@@ -27,7 +28,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     with resolve_target(args.target) as repo_path:
-        if args.function_calling:
+        if args.chatgpt_agent:
+            agent = ChatGPTReviewAgent(
+                model=args.ai_model,
+                timeout=args.ai_timeout,
+                max_output_tokens=args.ai_max_output_tokens,
+                max_files=args.max_files,
+                max_file_size=args.max_file_size,
+                report_language=args.report_language,
+            )
+            try:
+                report = agent.run(repo_path)
+            except AIProviderError as exc:
+                raise SystemExit(str(exc)) from exc
+        elif args.function_calling:
             agent = OpenAIFunctionCallingAgent(
                 model=args.ai_model,
                 timeout=args.ai_timeout,
@@ -142,6 +156,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--function-calling",
         action="store_true",
         help="Run the OpenAI Responses API function-calling agent. Requires OPENAI_API_KEY.",
+    )
+    parser.add_argument(
+        "--chatgpt-agent",
+        action="store_true",
+        help="Run the ChatGPT API repository review agent. Requires OPENAI_API_KEY.",
     )
     parser.add_argument(
         "--ai-provider",

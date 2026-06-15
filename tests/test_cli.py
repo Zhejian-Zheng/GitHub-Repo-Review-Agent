@@ -213,6 +213,36 @@ class CLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         mock_agent_class.assert_called_once()
 
+    @patch("repo_review_agent.cli.ChatGPTReviewAgent")
+    def test_main_runs_chatgpt_agent_mode(self, mock_agent_class) -> None:
+        mock_agent_class.return_value.run.return_value = minimal_report()
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            output_path = Path(tmp) / "review.md"
+
+            exit_code = main([str(root), "--chatgpt-agent", "--output", str(output_path)])
+
+        self.assertEqual(exit_code, 0)
+        mock_agent_class.assert_called_once()
+        mock_agent_class.return_value.run.assert_called_once_with(root.resolve())
+
+    @patch("repo_review_agent.cli.ChatGPTReviewAgent")
+    def test_main_exits_when_chatgpt_agent_fails(self, mock_agent_class) -> None:
+        from repo_review_agent.llm import AIProviderError
+
+        mock_agent_class.return_value.run.side_effect = AIProviderError("missing key")
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+
+            with self.assertRaises(SystemExit) as context:
+                main([str(root), "--chatgpt-agent"])
+
+        self.assertEqual(str(context.exception), "missing key")
+
     @patch("repo_review_agent.cli.OpenAIFunctionCallingAgent")
     def test_main_exits_when_function_calling_agent_fails(self, mock_agent_class) -> None:
         from repo_review_agent.llm import AIProviderError

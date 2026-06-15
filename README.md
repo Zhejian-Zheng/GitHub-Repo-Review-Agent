@@ -116,6 +116,15 @@ export OPENAI_API_KEY="your_api_key_here"
 PYTHONPATH=src python -m repo_review_agent.cli . --function-calling --output review-report.md
 ```
 
+Run the ChatGPT API repository review agent:
+
+```bash
+export OPENAI_API_KEY="your_api_key_here"
+repo-review . --chatgpt-agent --output review-report.md --json review-report.json
+```
+
+The ChatGPT agent uses the OpenAI Responses API with repository tools. The model can ask the app to scan the repository, inspect important files, run deterministic analysis, and render a report preview before returning the final structured AI review. Keep `OPENAI_API_KEY` in your environment or deployment secrets; do not commit it to the repository.
+
 Analyze another local repository:
 
 ```bash
