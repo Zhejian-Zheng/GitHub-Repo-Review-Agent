@@ -18,6 +18,7 @@ This project is intended to demonstrate a lightweight but realistic AI agent eng
 - Real AI demo report generated with local Ollama `llama3.2`.
 - Evaluation fixtures and golden report tests for representative healthy and risky repositories.
 - Additional deterministic rules for floating dependency versions, broad GitHub Actions permissions, and unpinned Docker base images.
+- Shared prompt-tuning guidance and few-shot JSON examples for AI review synthesis and ChatGPT agent output.
 
 ## Resume Summary
 

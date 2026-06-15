@@ -20,7 +20,7 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 - **Input**: local repository path or public GitHub repository URL.
 - **Output**: Markdown report, structured JSON, optional GitHub issue drafts, and optional PR comment.
 - **Review depth**: source structure, dependency manifests, tests, CI, docs, Docker hardening, secret-like values, framework signals, and evidence file paths.
-- **AI layer**: optional OpenAI, OpenRouter, or local Ollama synthesis with stable JSON sections.
+- **AI layer**: optional OpenAI, OpenRouter, or local Ollama synthesis with stable JSON sections, prompt-tuning rules, and few-shot examples.
 - **Interfaces**: CLI, React web UI, FastAPI endpoint, Docker workflow, GitHub integration, and MCP server.
 
 ## Product Capabilities
@@ -34,6 +34,7 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 - Includes a custom `RepoReviewAgent` that uses a traceable tool-calling loop.
 - Includes an OpenAI Responses API function-calling agent where the model calls repository tools.
 - Adds an optional AI review section through OpenAI, OpenRouter, or local Ollama.
+- Keeps AI synthesis evidence-bound with shared prompt-tuning guidance and few-shot JSON examples.
 - Creates GitHub issue drafts, can create GitHub issues, and can post pull request comments.
 - Provides optional Docker, FastAPI, and MCP server entry points.
 - Includes production deployment examples for Docker Compose, Nginx, HTTPS, and public demo controls.

@@ -18,6 +18,7 @@ from .llm import (
     resolve_model,
 )
 from .models import AgentStep, AIReview, RepositorySnapshot, ReviewReport
+from .prompting import build_few_shot_examples, build_prompt_tuning_guidance
 from .report import render_markdown
 from .scanner import read_text_file, scan_repository
 
@@ -212,6 +213,8 @@ class OpenAIFunctionCallingAgent:
         return replace(state.report, ai_review=ai_review, agent_trace=trace)
 
     def _create_response(self, input_items: list[dict[str, Any]]) -> dict:
+        tuning_guidance = build_prompt_tuning_guidance(self.report_language)
+        few_shot_examples = build_few_shot_examples(self.report_language)
         return _post_json(
             OPENAI_RESPONSES_URL,
             {
@@ -229,7 +232,11 @@ class OpenAIFunctionCallingAgent:
                     "bullet markers, empty strings, or resume/self-promotion content. The backend will render "
                     "Markdown with these sections: "
                     f"{', '.join(ai_section_headings(self.report_language))}. "
-                    f"Write all JSON string values in {language_display_name(self.report_language)}."
+                    f"Write all JSON string values in {language_display_name(self.report_language)}.\n\n"
+                    "Prompt tuning guidance:\n"
+                    f"{tuning_guidance}\n\n"
+                    "Few-shot examples:\n"
+                    f"{few_shot_examples}"
                 ),
             },
             timeout=self.timeout,

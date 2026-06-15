@@ -85,6 +85,25 @@ class OpenAIFunctionCallingAgentTests(unittest.TestCase):
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @patch("repo_review_agent.function_agent._post_json")
+    def test_create_response_includes_prompt_tuning_and_few_shot_examples(
+        self,
+        mock_post_json,
+    ) -> None:
+        mock_post_json.return_value = {"output": []}
+
+        agent = OpenAIFunctionCallingAgent(model="gpt-test", report_language="zh-CN")
+        agent._create_response([{"role": "user", "content": "review"}])
+
+        payload = mock_post_json.call_args.args[1]
+        instructions = payload["instructions"]
+        self.assertIn("Prompt tuning guidance", instructions)
+        self.assertIn("Few-shot examples", instructions)
+        self.assertIn("确定性扫描", instructions)
+        self.assertIn("risky-js-app", instructions)
+        self.assertIn("Simplified Chinese", instructions)
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @patch("repo_review_agent.function_agent._post_json")
     def test_function_calling_agent_runs_model_driven_tool_loop(self, mock_post_json) -> None:
         mock_post_json.side_effect = [
             {

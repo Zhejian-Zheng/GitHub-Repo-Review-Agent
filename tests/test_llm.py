@@ -81,6 +81,9 @@ class LLMTests(unittest.TestCase):
         self.assertIn("project_highlights", prompt)
         self.assertIn('"evidence_paths": [', prompt)
         self.assertIn('"src/app.py"', prompt)
+        self.assertIn("Prompt tuning guidance", prompt)
+        self.assertIn("Few-shot examples", prompt)
+        self.assertIn("risky-js-app", prompt)
 
     def test_build_review_prompt_supports_chinese(self) -> None:
         prompt = build_review_prompt(sample_report(), language="zh-CN")
@@ -93,6 +96,8 @@ class LLMTests(unittest.TestCase):
         self.assertIn("prioritized recommendations", prompt)
         self.assertIn("Do not add any resume", prompt)
         self.assertIn("Each value must be an array", prompt)
+        self.assertIn("确定性扫描", prompt)
+        self.assertIn("risky-js-app", prompt)
 
     def test_extract_openai_text_handles_output_text(self) -> None:
         text = extract_openai_text({"output_text": "hello"})

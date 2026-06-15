@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 from .i18n import ai_section_headings, language_display_name, normalize_report_language
 from .models import AIReview, ReviewReport
+from .prompting import build_few_shot_examples, build_prompt_tuning_guidance
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -123,6 +124,8 @@ def build_review_prompt(report: ReviewReport, *, language: str | None = None) ->
     language = normalize_report_language(language)
     sections = "\n".join(ai_section_headings(language))
     schema = json.dumps(_review_json_schema_example(language), indent=2, ensure_ascii=False)
+    tuning_guidance = build_prompt_tuning_guidance(language)
+    few_shot_examples = build_few_shot_examples(language)
     payload = {
         "repo_name": report.repo_name,
         "generated_at": report.generated_at,
@@ -163,6 +166,10 @@ def build_review_prompt(report: ReviewReport, *, language: str | None = None) ->
         "- project_highlights should summarize the repository's strongest technical qualities and differentiators, backed by scan evidence.\n"
         "- next_steps should provide prioritized recommendations with concrete implementation guidance.\n"
         "- Aim for enough detail to produce a 600-900 word rendered review when enough evidence is available.\n\n"
+        "Prompt tuning guidance:\n"
+        f"{tuning_guidance}\n\n"
+        "Few-shot examples:\n"
+        f"{few_shot_examples}\n\n"
         f"Structured repository analysis:\n```json\n{review_json}\n```"
     )
 
