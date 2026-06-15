@@ -152,6 +152,18 @@ def _localize_evidence_zh(text: str) -> str:
     if match:
         return f"{match.group(1)}：匹配到疑似密钥模式 {match.group(2)}"
 
+    match = re.match(r"^(.+): (.+) uses floating version (.+)$", text)
+    if match:
+        return f"{match.group(1)}：{match.group(2)} 使用浮动版本 {match.group(3)}"
+
+    match = re.match(r"^(.+): (.+) is unconstrained$", text)
+    if match:
+        return f"{match.group(1)}：{match.group(2)} 未设置版本约束"
+
+    match = re.match(r"^(.+): FROM (.+)$", text)
+    if match:
+        return f"{match.group(1)}：基础镜像 FROM {match.group(2)} 未固定版本"
+
     return _EVIDENCE_ZH.get(text, text)
 
 
@@ -223,6 +235,9 @@ _FINDING_TITLE_ZH = {
     "Build frontend assets in CI": "在 CI 中构建前端产物",
     "Commit a JavaScript package lockfile": "提交 JavaScript 包管理锁文件",
     "Harden Docker image with a non-root runtime user": "使用非 root 运行用户加固 Docker 镜像",
+    "Pin broad or floating dependency versions": "固定宽泛或浮动的依赖版本",
+    "Restrict GitHub Actions workflow permissions": "收紧 GitHub Actions 工作流权限",
+    "Pin Docker base image versions": "固定 Docker 基础镜像版本",
 }
 
 _CATEGORY_ZH = {
@@ -246,6 +261,7 @@ _EVIDENCE_ZH = {
     "README, license, dependency metadata, tests, and CI signals were present in the scan.": "扫描中已发现 README、许可证、依赖元数据、测试和 CI 信号。",
     "package.json was found without package-lock.json, pnpm-lock.yaml, yarn.lock, or bun.lock.": "发现 package.json，但未发现 package-lock.json、pnpm-lock.yaml、yarn.lock 或 bun.lock。",
     "A JavaScript frontend package was detected, but CI does not appear to run a frontend build command.": "检测到 JavaScript 前端包，但 CI 中似乎没有运行前端构建命令。",
+    "One or more GitHub Actions workflows grant write-level permissions.": "一个或多个 GitHub Actions 工作流授予了写级别权限。",
 }
 
 _RECOMMENDATION_ZH = {
@@ -264,6 +280,9 @@ _RECOMMENDATION_ZH = {
     "Run npm run build, pnpm build, or the equivalent frontend build command in CI.": "在 CI 中运行 npm run build、pnpm build 或等价的前端构建命令。",
     "Commit the package manager lockfile so dependency resolution is reproducible in CI and deployments.": "提交包管理器锁文件，确保 CI 和部署环境中的依赖解析可复现。",
     "Create and switch to an application user in the final Docker stage to reduce container privilege risk.": "在最终 Docker 阶段创建并切换到应用用户，降低容器权限风险。",
+    "Replace latest, wildcard, and unconstrained dependency versions with explicit compatible ranges or pinned versions so builds are reproducible.": "将 latest、通配符和无约束依赖版本替换为明确的兼容范围或固定版本，确保构建可复现。",
+    "Set the narrowest required permissions for each workflow, default to read-only contents access, and grant write access only to jobs that need it.": "为每个工作流设置最小必要权限，默认仅授予只读 contents 访问，并只给确实需要的 job 写权限。",
+    "Use explicit, maintained base image tags instead of latest or untagged images so container builds are reproducible.": "使用明确且仍维护的基础镜像标签，避免 latest 或未标记镜像，确保容器构建可复现。",
 }
 
 _AI_ERROR_ZH = {

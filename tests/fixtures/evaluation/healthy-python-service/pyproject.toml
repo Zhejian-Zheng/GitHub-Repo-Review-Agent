@@ -1,0 +1,6 @@
+[project]
+name = "healthy-python-service"
+dependencies = [
+  "fastapi>=0.115",
+  "pydantic>=2",
+]

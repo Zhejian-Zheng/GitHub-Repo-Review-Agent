@@ -96,6 +96,12 @@ README_OUTPUT_TERMS = {
     "截图",
 }
 
+GITHUB_ACTIONS_WRITE_PERMISSION_PATTERN = re.compile(
+    r"(?im)^\s*(?:permissions:\s*write-all|(?:contents|actions|checks|deployments|issues|packages|pull-requests|repository-projects|security-events|statuses):\s*write)\s*$"
+)
+
+PYTHON_DEPENDENCY_VERSION_PATTERN = re.compile(r"[<>=!~]=|===")
+
 
 def analyze_repository(
     root: Path,
@@ -327,6 +333,9 @@ def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
             )
         )
 
+    dependency_findings = build_dependency_quality_findings(snapshot, root)
+    findings.extend(dependency_findings)
+
     docker_findings = build_docker_quality_findings(snapshot, root)
     findings.extend(docker_findings)
 
@@ -440,7 +449,39 @@ def build_ci_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[
             )
         )
 
+    risky_permissions = find_risky_ci_permissions(snapshot, root)
+    if risky_permissions:
+        findings.append(
+            Finding(
+                title="Restrict GitHub Actions workflow permissions",
+                severity="medium",
+                category="security",
+                evidence=[
+                    "One or more GitHub Actions workflows grant write-level permissions."
+                ],
+                recommendation="Set the narrowest required permissions for each workflow, default to read-only contents access, and grant write access only to jobs that need it.",
+                evidence_paths=risky_permissions,
+            )
+        )
+
     return findings
+
+
+def build_dependency_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
+    floating_dependencies = find_floating_dependency_versions(snapshot, root)
+    if not floating_dependencies:
+        return []
+
+    return [
+        Finding(
+            title="Pin broad or floating dependency versions",
+            severity="medium",
+            category="dependency hygiene",
+            evidence=floating_dependencies[:5],
+            recommendation="Replace latest, wildcard, and unconstrained dependency versions with explicit compatible ranges or pinned versions so builds are reproducible.",
+            evidence_paths=_paths_from_prefixed_evidence(floating_dependencies[:5]),
+        )
+    ]
 
 
 def build_docker_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
@@ -449,6 +490,18 @@ def build_docker_quality_findings(snapshot: RepositorySnapshot, root: Path) -> l
 
     for dockerfile in dockerfiles[:3]:
         text = read_text_file(root, dockerfile, limit=80_000)
+        floating_base_images = find_floating_docker_base_images(text)
+        if floating_base_images:
+            findings.append(
+                Finding(
+                    title="Pin Docker base image versions",
+                    severity="medium",
+                    category="dependency hygiene",
+                    evidence=[f"{dockerfile}: {image}" for image in floating_base_images[:3]],
+                    recommendation="Use explicit, maintained base image tags instead of latest or untagged images so container builds are reproducible.",
+                    evidence_paths=[dockerfile],
+                )
+            )
         if not _dockerfile_sets_non_root_user(text):
             findings.append(
                 Finding(
@@ -463,6 +516,46 @@ def build_docker_quality_findings(snapshot: RepositorySnapshot, root: Path) -> l
             break
 
     return findings
+
+
+def find_floating_dependency_versions(snapshot: RepositorySnapshot, root: Path) -> list[str]:
+    evidence: list[str] = []
+    for rel_path in snapshot.dependency_files:
+        lower_name = Path(rel_path).name.lower()
+        if lower_name == "package.json":
+            evidence.extend(_floating_package_json_dependencies(root, rel_path))
+        elif lower_name == "requirements.txt":
+            evidence.extend(_floating_requirements_dependencies(root, rel_path))
+        elif lower_name == "pyproject.toml":
+            evidence.extend(_floating_pyproject_dependencies(root, rel_path))
+    return evidence
+
+
+def find_risky_ci_permissions(snapshot: RepositorySnapshot, root: Path) -> list[str]:
+    risky_paths: list[str] = []
+    for ci_file in snapshot.ci_files:
+        if not ci_file.lower().startswith(".github/workflows/"):
+            continue
+        text = read_text_file(root, ci_file, limit=80_000)
+        if GITHUB_ACTIONS_WRITE_PERMISSION_PATTERN.search(text):
+            risky_paths.append(ci_file)
+    return risky_paths
+
+
+def find_floating_docker_base_images(text: str) -> list[str]:
+    images: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = re.match(r"(?i)^FROM\s+([^\s]+)", stripped)
+        if not match:
+            continue
+        image = match.group(1)
+        tag = image.rsplit(":", 1)[1] if ":" in image.rsplit("/", 1)[-1] else ""
+        if not tag or tag == "latest":
+            images.append(f"FROM {image}")
+    return images
 
 
 def find_secret_like_values(snapshot: RepositorySnapshot, root: Path) -> list[str]:
@@ -491,6 +584,72 @@ def find_secret_like_values(snapshot: RepositorySnapshot, root: Path) -> list[st
 def _looks_like_secret_placeholder(match_text: str) -> bool:
     normalized = match_text.lower()
     return any(term in normalized for term in PLACEHOLDER_SECRET_TERMS)
+
+
+def _floating_package_json_dependencies(root: Path, rel_path: str) -> list[str]:
+    text = read_text_file(root, rel_path, limit=80_000)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+
+    evidence: list[str] = []
+    for section in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        dependencies = data.get(section, {})
+        if not isinstance(dependencies, dict):
+            continue
+        for name, version in sorted(dependencies.items()):
+            if isinstance(version, str) and _is_floating_js_version(version):
+                evidence.append(f"{rel_path}: {section}.{name} uses floating version {version!r}")
+    return evidence
+
+
+def _floating_requirements_dependencies(root: Path, rel_path: str) -> list[str]:
+    evidence: list[str] = []
+    for raw_line in read_text_file(root, rel_path, limit=80_000).splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith(("-", "--")):
+            continue
+        requirement = line.split("#", 1)[0].strip()
+        if requirement and not PYTHON_DEPENDENCY_VERSION_PATTERN.search(requirement):
+            package_name = re.split(r"[;\[]", requirement, maxsplit=1)[0].strip()
+            evidence.append(f"{rel_path}: {package_name} is unconstrained")
+    return evidence
+
+
+def _floating_pyproject_dependencies(root: Path, rel_path: str) -> list[str]:
+    text = read_text_file(root, rel_path, limit=80_000)
+    evidence: list[str] = []
+
+    in_dependency_array = False
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+
+        starts_dependency_array = (
+            re.match(r"^(?:[A-Za-z0-9_-]+\s*=\s*)?dependencies\s*=\s*\[", line)
+            or (in_dependency_array and line)
+        )
+        if not starts_dependency_array:
+            continue
+
+        in_dependency_array = "]" not in line
+        for match in re.finditer(r"['\"]([^'\"]+)['\"]", line):
+            dependency = match.group(1).strip()
+            if not dependency or PYTHON_DEPENDENCY_VERSION_PATTERN.search(dependency):
+                continue
+            evidence.append(f"{rel_path}: {dependency} is unconstrained")
+    return evidence
+
+
+def _is_floating_js_version(version: str) -> bool:
+    normalized = version.strip().lower()
+    return (
+        normalized in {"*", "x", "latest"}
+        or normalized.endswith(".x")
+        or "latest" in normalized
+    )
 
 
 def _has_package_json_without_lockfile(

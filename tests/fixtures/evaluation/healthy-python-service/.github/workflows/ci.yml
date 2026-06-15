@@ -1,0 +1,9 @@
+name: CI
+on: push
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python -m unittest discover -s tests

@@ -1,0 +1,17 @@
+{
+  "expected_findings": [
+    "No major project hygiene gaps detected"
+  ],
+  "forbidden_findings": [
+    "Pin broad or floating dependency versions",
+    "Restrict GitHub Actions workflow permissions",
+    "Pin Docker base image versions",
+    "Harden Docker image with a non-root runtime user"
+  ],
+  "expected_frameworks": [
+    "CI/CD",
+    "Docker",
+    "FastAPI",
+    "Pydantic"
+  ]
+}

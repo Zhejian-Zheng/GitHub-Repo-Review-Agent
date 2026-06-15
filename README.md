@@ -28,6 +28,7 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 - Scans local repositories or public GitHub URLs.
 - Detects source languages, dependency manifests, test files, docs, CI workflows, and common framework signals.
 - Flags project hygiene risks with evidence file paths, including missing tests, shallow test breadth, missing CI, weak CI checks, missing lockfiles, incomplete README guidance, Docker runtime hardening gaps, and possible hard-coded secrets.
+- Flags reproducibility and workflow risks such as floating dependency versions, unpinned Docker base images, and overly broad GitHub Actions write permissions.
 - Generates a Markdown review report and optional JSON output.
 - Supports English and Simplified Chinese report output.
 - Includes a custom `RepoReviewAgent` that uses a traceable tool-calling loop.
@@ -316,6 +317,15 @@ Run tests:
 ```bash
 python -m unittest discover -s tests
 ```
+
+Run coverage:
+
+```bash
+coverage run -m unittest discover -s tests
+coverage report
+```
+
+The test suite includes evaluation fixtures and golden report snapshots under `tests/fixtures/`. These lock in expected findings, forbidden false positives, framework signals, and rendered Markdown for representative repositories.
 
 ## Product Demo
 

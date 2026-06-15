@@ -16,6 +16,8 @@ This project is intended to demonstrate a lightweight but realistic AI agent eng
 - Optional FastAPI API and minimal web UI.
 - Optional MCP server exposing repository review tools.
 - Real AI demo report generated with local Ollama `llama3.2`.
+- Evaluation fixtures and golden report tests for representative healthy and risky repositories.
+- Additional deterministic rules for floating dependency versions, broad GitHub Actions permissions, and unpinned Docker base images.
 
 ## Resume Summary
 
@@ -26,3 +28,4 @@ Built a hybrid AI repository review agent that combines deterministic static ana
 - Add dependency vulnerability checks.
 - Add GitHub Actions PR annotation mode.
 - Add screenshots of the web UI and sample report.
+- Expand the evaluation fixture set across more stacks such as Django, Next.js, Go services, and monorepos.

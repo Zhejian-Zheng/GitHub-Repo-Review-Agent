@@ -103,6 +103,73 @@ class AnalyzerTests(unittest.TestCase):
         self.assertIn("Commit a JavaScript package lockfile", titles)
         self.assertEqual(paths_by_title["Commit a JavaScript package lockfile"], ["package.json"])
 
+    def test_analyzer_reports_floating_dependency_versions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text(
+                "# Example\n\n## Usage\nRun npm install.\n\n## Demo\nExample output.\n",
+                encoding="utf-8",
+            )
+            (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
+            (root / ".gitignore").write_text("node_modules\n", encoding="utf-8")
+            (root / "package.json").write_text(
+                '{"dependencies":{"react":"latest"},"devDependencies":{"vite":"*"}}\n',
+                encoding="utf-8",
+            )
+            (root / "package-lock.json").write_text("{}\n", encoding="utf-8")
+            (root / "requirements.txt").write_text("fastapi\npytest>=8\n", encoding="utf-8")
+            (root / "pyproject.toml").write_text(
+                "[project]\nname = 'example'\ndependencies = ['openai', 'pydantic>=2']\n",
+                encoding="utf-8",
+            )
+            (root / "src").mkdir()
+            (root / "src" / "app.js").write_text("console.log('hello')\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "app.test.js").write_text("test('x', () => {})\n", encoding="utf-8")
+            (root / ".github" / "workflows").mkdir(parents=True)
+            (root / ".github" / "workflows" / "ci.yml").write_text(
+                "name: CI\nrun: npm test\n",
+                encoding="utf-8",
+            )
+
+            report = analyze_repository(root)
+
+        findings = {finding.title: finding for finding in report.findings}
+        self.assertIn("Pin broad or floating dependency versions", findings)
+        evidence = "\n".join(findings["Pin broad or floating dependency versions"].evidence)
+        self.assertIn("package.json: dependencies.react", evidence)
+        self.assertIn("requirements.txt: fastapi", evidence)
+        self.assertIn("pyproject.toml: openai", evidence)
+        self.assertNotIn("example is unconstrained", evidence)
+
+    def test_analyzer_reports_risky_github_actions_permissions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github" / "workflows").mkdir(parents=True)
+            (root / "README.md").write_text(
+                "# Example\n\n## Usage\nRun python -m unittest.\n\n## Demo\nExample output.\n",
+                encoding="utf-8",
+            )
+            (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
+            (root / ".gitignore").write_text(".venv\n", encoding="utf-8")
+            (root / "pyproject.toml").write_text("[project]\nname = 'example'\n", encoding="utf-8")
+            (root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_app.py").write_text("def test_app(): pass\n", encoding="utf-8")
+            (root / ".github" / "workflows" / "ci.yml").write_text(
+                "name: CI\npermissions: write-all\nrun: python -m unittest discover\n",
+                encoding="utf-8",
+            )
+
+            report = analyze_repository(root)
+
+        findings = {finding.title: finding for finding in report.findings}
+        self.assertIn("Restrict GitHub Actions workflow permissions", findings)
+        self.assertEqual(
+            findings["Restrict GitHub Actions workflow permissions"].evidence_paths,
+            [".github/workflows/ci.yml"],
+        )
+
     def test_analyzer_reports_ci_without_test_or_frontend_build(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -188,6 +255,32 @@ class AnalyzerTests(unittest.TestCase):
         paths_by_title = {finding.title: finding.evidence_paths for finding in report.findings}
         self.assertIn("Harden Docker image with a non-root runtime user", titles)
         self.assertEqual(paths_by_title["Harden Docker image with a non-root runtime user"], ["Dockerfile"])
+
+    def test_analyzer_reports_floating_docker_base_image(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text(
+                "# Example\n\n## Usage\nRun docker build.\n\n## Demo\nExample output.\n",
+                encoding="utf-8",
+            )
+            (root / "LICENSE").write_text("MIT\n", encoding="utf-8")
+            (root / ".gitignore").write_text(".venv\n", encoding="utf-8")
+            (root / "pyproject.toml").write_text("[project]\nname = 'example'\n", encoding="utf-8")
+            (root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_app.py").write_text("def test_app(): pass\n", encoding="utf-8")
+            (root / ".github" / "workflows").mkdir(parents=True)
+            (root / ".github" / "workflows" / "ci.yml").write_text(
+                "name: CI\nrun: python -m unittest discover\n",
+                encoding="utf-8",
+            )
+            (root / "Dockerfile").write_text("FROM python:latest\nUSER app\n", encoding="utf-8")
+
+            report = analyze_repository(root)
+
+        findings = {finding.title: finding for finding in report.findings}
+        self.assertIn("Pin Docker base image versions", findings)
+        self.assertEqual(findings["Pin Docker base image versions"].evidence_paths, ["Dockerfile"])
 
     def test_analyzer_attaches_evidence_paths_to_summary_finding(self) -> None:
         with TemporaryDirectory() as tmp:

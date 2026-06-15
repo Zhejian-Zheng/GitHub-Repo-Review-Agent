@@ -1,0 +1,24 @@
+{
+  "expected_findings": [
+    "Expand README with setup and example output",
+    "Add an explicit open-source license",
+    "Add a .gitignore file",
+    "Add automated tests for the core behavior",
+    "Run automated tests in CI",
+    "Build frontend assets in CI",
+    "Restrict GitHub Actions workflow permissions",
+    "Commit a JavaScript package lockfile",
+    "Pin broad or floating dependency versions",
+    "Pin Docker base image versions",
+    "Harden Docker image with a non-root runtime user"
+  ],
+  "forbidden_findings": [
+    "No major project hygiene gaps detected"
+  ],
+  "expected_frameworks": [
+    "CI/CD",
+    "Docker",
+    "React",
+    "Vite"
+  ]
+}
