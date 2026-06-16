@@ -193,18 +193,39 @@ with checks as (
     'authenticated users can only select their own async review jobs'
   union all
   select
-    'privilege: service_role review_jobs read/write',
+    'privilege: service_role history tables read/write',
     has_schema_privilege('service_role', 'public', 'USAGE')
+      and has_table_privilege('service_role', 'public.repositories', 'SELECT')
+      and has_table_privilege('service_role', 'public.repositories', 'INSERT')
+      and has_table_privilege('service_role', 'public.repositories', 'UPDATE')
+      and has_table_privilege('service_role', 'public.repositories', 'DELETE')
+      and has_table_privilege('service_role', 'public.review_runs', 'SELECT')
+      and has_table_privilege('service_role', 'public.review_runs', 'INSERT')
+      and has_table_privilege('service_role', 'public.review_runs', 'UPDATE')
+      and has_table_privilege('service_role', 'public.review_runs', 'DELETE')
+      and has_table_privilege('service_role', 'public.findings', 'SELECT')
+      and has_table_privilege('service_role', 'public.findings', 'INSERT')
+      and has_table_privilege('service_role', 'public.findings', 'UPDATE')
+      and has_table_privilege('service_role', 'public.findings', 'DELETE')
+      and has_table_privilege('service_role', 'public.ai_reviews', 'SELECT')
+      and has_table_privilege('service_role', 'public.ai_reviews', 'INSERT')
+      and has_table_privilege('service_role', 'public.ai_reviews', 'UPDATE')
+      and has_table_privilege('service_role', 'public.ai_reviews', 'DELETE')
       and has_table_privilege('service_role', 'public.review_jobs', 'SELECT')
       and has_table_privilege('service_role', 'public.review_jobs', 'INSERT')
       and has_table_privilege('service_role', 'public.review_jobs', 'UPDATE')
       and has_table_privilege('service_role', 'public.review_jobs', 'DELETE'),
-    'backend service role can create, update, read, and clean up persistent review jobs'
+    'backend service role can create, update, read, and clean up saved reviews and persistent jobs'
   union all
   select
-    'privilege: authenticated review_jobs select',
-    has_table_privilege('authenticated', 'public.review_jobs', 'SELECT'),
-    'authenticated users can read review jobs through RLS'
+    'privilege: authenticated history tables select',
+    has_schema_privilege('authenticated', 'public', 'USAGE')
+      and has_table_privilege('authenticated', 'public.repositories', 'SELECT')
+      and has_table_privilege('authenticated', 'public.review_runs', 'SELECT')
+      and has_table_privilege('authenticated', 'public.findings', 'SELECT')
+      and has_table_privilege('authenticated', 'public.ai_reviews', 'SELECT')
+      and has_table_privilege('authenticated', 'public.review_jobs', 'SELECT'),
+    'authenticated users can read owned saved reviews and review jobs through RLS'
   union all
   select
     'policy: findings_select_own',

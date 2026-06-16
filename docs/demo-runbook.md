@@ -14,6 +14,8 @@ For an existing project that already had an older history schema, run:
 
 ```text
 supabase/migrations/002_repository_ownership_hardening.sql
+supabase/migrations/003_review_jobs.sql
+supabase/migrations/004_table_privileges.sql
 ```
 
 Then run:

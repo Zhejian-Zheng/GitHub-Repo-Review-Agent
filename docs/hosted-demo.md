@@ -11,7 +11,7 @@ The frontend can always show the built-in sample report through `Demo`. Signed-i
 ## 1. Prepare Supabase
 
 1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the SQL Editor. For an existing project, run the migrations in `supabase/migrations`, including `003_review_jobs.sql`.
+2. Run `supabase/schema.sql` in the SQL Editor. For an existing project, run the migrations in `supabase/migrations`, including `003_review_jobs.sql` and `004_table_privileges.sql`.
 3. Run `supabase/verify_history_schema.sql`; every row should return `status = pass`.
 4. In Auth settings, enable Email provider.
 5. Open **Authentication -> URL Configuration**.

@@ -29,6 +29,7 @@ class SupabaseSchemaTests(unittest.TestCase):
         self.assertIn("001_initial_schema.sql", migrations)
         self.assertIn("002_repository_ownership_hardening.sql", migrations)
         self.assertIn("003_review_jobs.sql", migrations)
+        self.assertIn("004_table_privileges.sql", migrations)
 
     def test_schema_persists_async_review_jobs(self) -> None:
         schema = SCHEMA.read_text(encoding="utf-8").lower()
@@ -44,6 +45,21 @@ class SupabaseSchemaTests(unittest.TestCase):
         self.assertIn("grant select, insert, update, delete on public.review_jobs to service_role", schema)
         self.assertIn("grant select on public.review_jobs to authenticated", schema)
 
+    def test_schema_grants_api_roles_table_privileges(self) -> None:
+        schema = SCHEMA.read_text(encoding="utf-8").lower()
+        migration = (MIGRATIONS / "004_table_privileges.sql").read_text(encoding="utf-8").lower()
+        tables = ("repositories", "review_runs", "findings", "ai_reviews", "review_jobs")
+
+        for sql in (schema, migration):
+            self.assertIn("grant usage on schema public to service_role, authenticated", sql)
+
+            for table in tables:
+                self.assertIn(
+                    f"grant select, insert, update, delete on public.{table} to service_role",
+                    sql,
+                )
+                self.assertIn(f"grant select on public.{table} to authenticated", sql)
+
     def test_schema_verification_script_checks_ownership_hardening(self) -> None:
         verifier = VERIFY_SCHEMA.read_text(encoding="utf-8").lower()
 
@@ -56,9 +72,11 @@ class SupabaseSchemaTests(unittest.TestCase):
         self.assertIn("review_jobs_owner_created_idx", verifier)
         self.assertIn("review_jobs_status_updated_idx", verifier)
         self.assertIn("review_jobs_select_own", verifier)
-        self.assertIn("privilege: service_role review_jobs read/write", verifier)
+        self.assertIn("privilege: service_role history tables read/write", verifier)
+        self.assertIn("has_table_privilege('service_role', 'public.repositories', 'select')", verifier)
         self.assertIn("has_table_privilege('service_role', 'public.review_jobs', 'insert')", verifier)
-        self.assertIn("privilege: authenticated review_jobs select", verifier)
+        self.assertIn("privilege: authenticated history tables select", verifier)
+        self.assertIn("has_table_privilege('authenticated', 'public.repositories', 'select')", verifier)
 
 
 if __name__ == "__main__":

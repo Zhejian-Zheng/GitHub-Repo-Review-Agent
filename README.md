@@ -181,7 +181,7 @@ repo-review . --agent --report-language zh-CN --output review-report.zh.md
 Save review history to Supabase:
 
 1. Open your Supabase SQL Editor and run [`supabase/schema.sql`](supabase/schema.sql).
-   If you created the project with an earlier version of this schema, run it again or run the migrations in [`supabase/migrations`](supabase/migrations), including [`002_repository_ownership_hardening.sql`](supabase/migrations/002_repository_ownership_hardening.sql) and [`003_review_jobs.sql`](supabase/migrations/003_review_jobs.sql). These upgrades add per-user repository isolation, cascade owner cleanup, project-list indexes, and the persistent `review_jobs` table used by the hosted web API.
+   If you created the project with an earlier version of this schema, run it again or run the migrations in [`supabase/migrations`](supabase/migrations), including [`002_repository_ownership_hardening.sql`](supabase/migrations/002_repository_ownership_hardening.sql), [`003_review_jobs.sql`](supabase/migrations/003_review_jobs.sql), and [`004_table_privileges.sql`](supabase/migrations/004_table_privileges.sql). These upgrades add per-user repository isolation, cascade owner cleanup, project-list indexes, the persistent `review_jobs` table used by the hosted web API, and the Supabase role grants required by the backend.
 2. Run [`supabase/verify_history_schema.sql`](supabase/verify_history_schema.sql) in the SQL Editor. Every row should return `status = pass`.
 3. Set server-side environment variables:
 
