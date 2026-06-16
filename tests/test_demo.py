@@ -1,5 +1,5 @@
-import unittest
 from unittest.mock import patch
+import unittest
 
 from repo_review_agent.demo import collect_readiness_checks, main, render_readiness_report
 

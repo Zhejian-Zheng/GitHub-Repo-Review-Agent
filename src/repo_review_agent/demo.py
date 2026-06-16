@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Mapping
+from typing import Literal
 
 from .history import HistoryStoreError, SupabaseHistoryStore
 

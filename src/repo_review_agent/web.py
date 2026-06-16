@@ -15,8 +15,8 @@ from .analyzer import analyze_repository
 from .auth import AuthError, AuthUser, bearer_token_from_headers, get_supabase_user
 from .cli import resolve_target
 from .function_agent import OpenAIFunctionCallingAgent
-from .i18n import localize_report
 from .history import HistoryNotFoundError, HistoryStoreError, SupabaseHistoryStore
+from .i18n import localize_report
 from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .report import render_markdown
 from .security import (
