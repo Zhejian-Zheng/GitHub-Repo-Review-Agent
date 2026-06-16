@@ -76,7 +76,13 @@ function App() {
   }, [form.ai_provider, form.report_language]);
 
   useEffect(() => {
-    const urlSession = consumeSessionFromUrl();
+    let urlSession = null;
+    try {
+      urlSession = consumeSessionFromUrl();
+    } catch (error) {
+      setAuthStatus(friendlyAuthError(error.message, isChinese));
+      return undefined;
+    }
     const session = urlSession || loadStoredSession();
     if (!session?.access_token) return undefined;
 
@@ -754,6 +760,11 @@ function AuthGate({
 }
 
 function friendlyAuthError(message, isChinese) {
+  if (/otp.*expired/i.test(message || "") || /email link is invalid/i.test(message || "")) {
+    return isChinese
+      ? "邮箱确认链接已失效。请回到登录页重新注册，或在 Supabase 中重新发送确认邮件。"
+      : "The email confirmation link expired. Return to sign-up or resend the confirmation email from Supabase.";
+  }
   if (/valid bearer token/i.test(message || "") || /bearer token/i.test(message || "")) {
     return isChinese
       ? "登录凭证无效或已过期。请重新登录；如果刚注册，请先完成邮箱验证。"

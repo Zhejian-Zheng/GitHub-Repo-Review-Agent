@@ -190,3 +190,7 @@ create policy review_jobs_select_own
 on public.review_jobs
 for select
 using (owner_id = auth.uid());
+
+grant usage on schema public to service_role;
+grant select, insert, update, delete on public.review_jobs to service_role;
+grant select on public.review_jobs to authenticated;

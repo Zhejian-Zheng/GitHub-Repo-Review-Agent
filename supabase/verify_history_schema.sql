@@ -193,6 +193,20 @@ with checks as (
     'authenticated users can only select their own async review jobs'
   union all
   select
+    'privilege: service_role review_jobs read/write',
+    has_schema_privilege('service_role', 'public', 'USAGE')
+      and has_table_privilege('service_role', 'public.review_jobs', 'SELECT')
+      and has_table_privilege('service_role', 'public.review_jobs', 'INSERT')
+      and has_table_privilege('service_role', 'public.review_jobs', 'UPDATE')
+      and has_table_privilege('service_role', 'public.review_jobs', 'DELETE'),
+    'backend service role can create, update, read, and clean up persistent review jobs'
+  union all
+  select
+    'privilege: authenticated review_jobs select',
+    has_table_privilege('authenticated', 'public.review_jobs', 'SELECT'),
+    'authenticated users can read review jobs through RLS'
+  union all
+  select
     'policy: findings_select_own',
     exists (
       select 1

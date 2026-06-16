@@ -5,7 +5,8 @@ export const authConfig = {
   supabaseUrl: import.meta.env.VITE_SUPABASE_URL || "",
   anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || "",
   apiBaseUrl: (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, ""),
-  apiToken: import.meta.env.VITE_REPO_REVIEW_API_TOKEN || ""
+  apiToken: import.meta.env.VITE_REPO_REVIEW_API_TOKEN || "",
+  authRedirectUrl: (import.meta.env.VITE_AUTH_REDIRECT_URL || "").replace(/\/$/, "")
 };
 
 export function backendUrl(path) {
@@ -54,6 +55,12 @@ export function clearStoredSession() {
 
 export function consumeSessionFromUrl() {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const redirectError = params.get("error_description") || params.get("error");
+  if (redirectError) {
+    window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+    throw new Error(redirectError);
+  }
+
   const accessToken = params.get("access_token");
   const refreshToken = params.get("refresh_token");
   if (!accessToken) return null;
@@ -84,7 +91,8 @@ export async function signInWithPassword(email, password) {
 export async function signUpWithPassword(email, password) {
   const data = await authRequest("/signup", {
     method: "POST",
-    body: { email, password }
+    body: { email, password },
+    redirectTo: authRedirectUrl()
   });
   const session = normalizeSession(data);
   if (session.access_token) {
@@ -157,7 +165,13 @@ function expiresAtFromSeconds(expiresIn) {
   return expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : null;
 }
 
-async function authRequest(path, { method, body, accessToken } = {}) {
+function authRedirectUrl() {
+  if (authConfig.authRedirectUrl) return authConfig.authRedirectUrl;
+  const basePath = import.meta.env.BASE_URL || "/";
+  return `${window.location.origin}${basePath}`;
+}
+
+async function authRequest(path, { method, body, accessToken, redirectTo } = {}) {
   if (!isAuthConfigured()) {
     throw new Error("Supabase auth is not configured.");
   }
@@ -170,7 +184,12 @@ async function authRequest(path, { method, body, accessToken } = {}) {
     headers.Authorization = `Bearer ${accessToken}`;
   }
 
-  const response = await fetch(`${authConfig.supabaseUrl.replace(/\/$/, "")}/auth/v1${path}`, {
+  const url = new URL(`${authConfig.supabaseUrl.replace(/\/$/, "")}/auth/v1${path}`);
+  if (redirectTo) {
+    url.searchParams.set("redirect_to", redirectTo);
+  }
+
+  const response = await fetch(url.toString(), {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined

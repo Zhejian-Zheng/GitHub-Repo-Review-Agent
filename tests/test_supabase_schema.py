@@ -41,6 +41,8 @@ class SupabaseSchemaTests(unittest.TestCase):
         self.assertIn("review_jobs_status_updated_idx", schema)
         self.assertIn("alter table public.review_jobs enable row level security", schema)
         self.assertIn("review_jobs_select_own", schema)
+        self.assertIn("grant select, insert, update, delete on public.review_jobs to service_role", schema)
+        self.assertIn("grant select on public.review_jobs to authenticated", schema)
 
     def test_schema_verification_script_checks_ownership_hardening(self) -> None:
         verifier = VERIFY_SCHEMA.read_text(encoding="utf-8").lower()
@@ -54,6 +56,9 @@ class SupabaseSchemaTests(unittest.TestCase):
         self.assertIn("review_jobs_owner_created_idx", verifier)
         self.assertIn("review_jobs_status_updated_idx", verifier)
         self.assertIn("review_jobs_select_own", verifier)
+        self.assertIn("privilege: service_role review_jobs read/write", verifier)
+        self.assertIn("has_table_privilege('service_role', 'public.review_jobs', 'insert')", verifier)
+        self.assertIn("privilege: authenticated review_jobs select", verifier)
 
 
 if __name__ == "__main__":

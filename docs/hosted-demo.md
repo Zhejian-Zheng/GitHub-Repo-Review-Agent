@@ -14,12 +14,20 @@ The frontend can always show the built-in sample report through `Demo`. Signed-i
 2. Run `supabase/schema.sql` in the SQL Editor. For an existing project, run the migrations in `supabase/migrations`, including `003_review_jobs.sql`.
 3. Run `supabase/verify_history_schema.sql`; every row should return `status = pass`.
 4. In Auth settings, enable Email provider.
-5. Add redirect URLs:
+5. Open **Authentication -> URL Configuration**.
+6. Set **Site URL** to your deployed frontend:
 
 ```text
-http://localhost:8000
-http://localhost:5173
 https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/
+```
+
+7. Add redirect URLs:
+
+```text
+http://localhost:5173/
+http://localhost:5173/**
+https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/
+https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/**
 ```
 
 For a fork, replace the GitHub Pages URL with:
@@ -76,6 +84,7 @@ In GitHub:
 REPO_REVIEW_API_BASE_URL=https://github-repo-review-agent-api.onrender.com
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your_public_anon_key
+VITE_AUTH_REDIRECT_URL=https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/
 ```
 
 5. Run the `GitHub Pages Demo` workflow or push to `main`.
