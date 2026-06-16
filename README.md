@@ -2,18 +2,40 @@
 
 [![CI](https://github.com/Zhejian-Zheng/GitHub-Repo-Review-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Zhejian-Zheng/GitHub-Repo-Review-Agent/actions/workflows/ci.yml)
 [![GitHub Pages](https://img.shields.io/github/actions/workflow/status/Zhejian-Zheng/GitHub-Repo-Review-Agent/pages.yml?branch=main&label=demo&logo=githubpages&logoColor=white)](https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/)
+![License](https://img.shields.io/github/license/Zhejian-Zheng/GitHub-Repo-Review-Agent?color=2E7D32)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=111111)
 ![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-ready-009688?logo=fastapi&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-auth%20%2B%20history-3FCF8E?logo=supabase&logoColor=white)
+![Postgres](https://img.shields.io/badge/Postgres-RLS%20enabled-4169E1?logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
+![Render](https://img.shields.io/badge/Render-backend%20blueprint-46E3B7?logo=render&logoColor=111111)
 ![Tests](https://img.shields.io/badge/tests-unittest-2E7D32?logo=checkmarx&logoColor=white)
+![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=111111)
+![Coverage](https://img.shields.io/badge/coverage%20target-95%25-2E7D32)
+![OpenAI](https://img.shields.io/badge/OpenAI-optional-412991?logo=openai&logoColor=white)
+![OpenRouter](https://img.shields.io/badge/OpenRouter-optional-111111)
+![MCP](https://img.shields.io/badge/MCP-server-5B5FC7)
+![i18n](https://img.shields.io/badge/i18n-EN%20%2F%20中文-0F766E)
 
 Put in a repository. Get back a structured engineering review.
 
 GitHub Repo Review Agent is a lightweight developer tool that turns a local repository or public GitHub URL into an architecture summary, project health report, and actionable issue backlog. It combines deterministic repository analysis with an optional AI synthesis layer, so the core review still works without an LLM API key.
 
 The product is designed for portfolio reviews, project handoffs, technical due diligence, and fast first-pass audits of unfamiliar codebases.
+
+## At a Glance
+
+| Area | What is included |
+| --- | --- |
+| Review engine | Deterministic repository scanner, analyzer rules, health score, finding fingerprints, and Markdown/JSON renderers. |
+| Web app | React + Vite UI with login/register, guest demo mode, async review jobs, project history, run details, and report export. |
+| Backend | FastAPI endpoints for live reviews, persistent job polling, Supabase Auth verification, CORS, rate limiting, and public demo controls. |
+| Persistence | Supabase/Postgres schema for repositories, review runs, findings, AI reviews, and durable `review_jobs` state. |
+| AI options | Optional OpenAI, OpenRouter, or local Ollama synthesis; deterministic review still works without an LLM key. |
+| Automation | GitHub Actions CI, GitHub Pages demo deploy, Render backend blueprint, Docker support, PR bot, GitHub issue drafts, and MCP server. |
+| Safety | Row-level security, per-user history ownership, service-role-only history writes, GitHub-only public target policy, and secret scanning heuristics. |
 
 ## Live Demo
 
