@@ -210,6 +210,9 @@ def _review_json_schema_example(language: str) -> dict[str, list[str]]:
 def parse_ai_review_sections(raw_review: str, *, language: str | None = None) -> dict[str, list[str]]:
     data = extract_json_object(raw_review)
     if data is None:
+        sections = extract_markdown_review_sections(raw_review)
+        if any(sections.values()):
+            return sections
         raise AIProviderError("AI review response was not valid JSON.")
     if not isinstance(data, dict):
         raise AIProviderError("AI review JSON must be an object.")
@@ -221,6 +224,34 @@ def parse_ai_review_sections(raw_review: str, *, language: str | None = None) ->
 
     if not any(sections.values()):
         raise AIProviderError("AI review JSON did not contain any review content.")
+
+    return sections
+
+
+def extract_markdown_review_sections(raw_text: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {key: [] for key in AI_REVIEW_SECTION_KEYS}
+    current_key: str | None = None
+    buffers: dict[str, list[str]] = {key: [] for key in AI_REVIEW_SECTION_KEYS}
+
+    for raw_line in raw_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if current_key and buffers[current_key] and buffers[current_key][-1]:
+                buffers[current_key].append("")
+            continue
+
+        heading_key = _markdown_heading_key(line)
+        if heading_key:
+            current_key = heading_key
+            continue
+
+        if current_key:
+            buffers[current_key].append(line)
+
+    for key, lines in buffers.items():
+        text = "\n".join(lines).strip()
+        if text:
+            sections[key] = _coerce_review_items(text)
 
     return sections
 
@@ -262,6 +293,15 @@ def extract_json_object(raw_text: str) -> object | None:
     if start != -1 and end != -1 and end > start:
         candidates.append(text[start : end + 1])
 
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
+        try:
+            data, _ = decoder.raw_decode(text[match.start() :])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+
     seen: set[str] = set()
     for candidate in candidates:
         if not candidate or candidate in seen:
@@ -271,6 +311,54 @@ def extract_json_object(raw_text: str) -> object | None:
             return json.loads(candidate)
         except json.JSONDecodeError:
             continue
+    return None
+
+
+def _markdown_heading_key(line: str) -> str | None:
+    text = line.strip()
+    text = re.sub(r"^#{1,6}\s*", "", text)
+    text = re.sub(r"^\*\*(.+)\*\*$", r"\1", text)
+    text = re.sub(r"[:：]\s*$", "", text).strip()
+    normalized = re.sub(r"\s+", " ", text).lower()
+
+    aliases = {
+        "architecture_summary": {
+            "ai architecture summary",
+            "architecture summary",
+            "architecture",
+            "summary",
+            "ai 架构总结",
+            "架构总结",
+            "项目架构",
+        },
+        "risks": {
+            "top risks",
+            "risks",
+            "risk analysis",
+            "主要风险",
+            "风险",
+            "风险分析",
+        },
+        "project_highlights": {
+            "project highlights",
+            "highlights",
+            "项目亮点",
+            "亮点",
+        },
+        "next_steps": {
+            "recommended next steps",
+            "next steps",
+            "recommendations",
+            "recommended actions",
+            "推荐下一步",
+            "下一步",
+            "建议",
+            "推荐",
+        },
+    }
+    for key, values in aliases.items():
+        if normalized in values:
+            return key
     return None
 
 
@@ -418,6 +506,7 @@ def generate_with_openrouter(
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_output_tokens,
+        "response_format": {"type": "json_object"},
     }
     data = _post_json(
         OPENROUTER_CHAT_COMPLETIONS_URL,

@@ -9,6 +9,7 @@ from repo_review_agent.llm import (
     attach_ai_error,
     build_review_prompt,
     extract_json_object,
+    extract_markdown_review_sections,
     extract_openai_text,
     extract_openrouter_text,
     generate_with_ollama,
@@ -204,6 +205,49 @@ class LLMTests(unittest.TestCase):
             sections["project_highlights"],
             ["The project combines deterministic findings with optional AI synthesis and traceable agent steps."],
         )
+
+    def test_parse_ai_review_sections_accepts_markdown_fallback(self) -> None:
+        sections = parse_ai_review_sections(
+            """
+## AI 架构总结
+这是一个前后端结合的仓库评审工具。
+
+## 主要风险
+- 线上配置仍依赖正确的环境变量。
+
+## 项目亮点
+- 已覆盖认证、历史记录和异步任务。
+
+## 推荐下一步
+- 增加端到端截图和部署检查。
+""",
+            language="zh-CN",
+        )
+
+        self.assertEqual(sections["architecture_summary"], ["这是一个前后端结合的仓库评审工具。"])
+        self.assertEqual(sections["risks"], ["线上配置仍依赖正确的环境变量。"])
+        self.assertEqual(sections["project_highlights"], ["已覆盖认证、历史记录和异步任务。"])
+        self.assertEqual(sections["next_steps"], ["增加端到端截图和部署检查。"])
+
+    def test_extract_markdown_review_sections_ignores_unknown_text(self) -> None:
+        sections = extract_markdown_review_sections(
+            """
+Intro text the model should not have returned.
+
+### Architecture Summary
+Scanner, analyzer, API, and web UI are separated clearly.
+
+### Top Risks
+1. Public deployment still depends on configured secrets.
+"""
+        )
+
+        self.assertEqual(
+            sections["architecture_summary"],
+            ["Scanner, analyzer, API, and web UI are separated clearly."],
+        )
+        self.assertEqual(sections["risks"], ["Public deployment still depends on configured secrets."])
+        self.assertEqual(sections["project_highlights"], [])
 
     def test_parse_ai_review_sections_coerces_aliases_strings_and_nested_items(self) -> None:
         sections = parse_ai_review_sections(
@@ -401,6 +445,8 @@ class LLMTests(unittest.TestCase):
         text = generate_with_openrouter("prompt", model="model", timeout=1, max_output_tokens=10)
 
         self.assertEqual(text, "ok")
+        payload = mock_post_json.call_args.args[1]
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
         headers = mock_post_json.call_args.kwargs["headers"]
         self.assertEqual(headers["HTTP-Referer"], "https://example.com")
         self.assertEqual(headers["X-OpenRouter-Title"], "Demo")
