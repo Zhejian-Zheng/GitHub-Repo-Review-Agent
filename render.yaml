@@ -24,6 +24,8 @@ services:
         value: 1000000
       - key: REPO_REVIEW_JOB_WORKERS
         value: 2
+      - key: REPO_REVIEW_JOB_STORE
+        value: supabase
       - key: REPO_REVIEW_CORS_ORIGINS
         sync: false
       - key: SUPABASE_URL

@@ -55,6 +55,7 @@ class DemoReadinessTests(unittest.TestCase):
 
         self.assertEqual(statuses["table repositories"], "pass")
         self.assertEqual(statuses["table review_runs"], "pass")
+        self.assertEqual(statuses["table review_jobs"], "pass")
         self.assertEqual(statuses["table findings"], "pass")
         self.assertEqual(statuses["table ai_reviews"], "pass")
 

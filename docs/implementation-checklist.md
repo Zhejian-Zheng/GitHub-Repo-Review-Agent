@@ -36,7 +36,7 @@ Built a hybrid AI repository review agent that combines deterministic static ana
 ## Remaining Nice-to-Haves
 
 - Add dependency vulnerability checks.
-- Replace in-memory web review jobs with a durable queue such as Redis/RQ or Celery for multi-instance deployments.
+- Web review jobs can persist to Supabase with `REPO_REVIEW_JOB_STORE=supabase`; use Redis/RQ or Celery later if the app needs dedicated workers, retries, or multi-instance queue coordination.
 - Add line-level GitHub Checks annotations for findings with precise file paths.
 - Add screenshots of the web UI and sample report.
 - Add screenshots of the hosted web UI after the public demo is deployed.

@@ -4,7 +4,8 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -12,12 +13,17 @@ from urllib.request import Request, urlopen
 from .models import Finding, ReviewReport
 
 DEFAULT_TIMEOUT = 30
+REVIEW_JOB_COLUMNS = (
+    "id,owner_id,status,target,request_json,result_json,error,"
+    "created_at,updated_at,started_at,completed_at"
+)
 SEVERITY_PENALTIES = {
     "high": 25,
     "medium": 12,
     "low": 5,
     "info": 0,
 }
+ReviewJobStatus = Literal["queued", "running", "completed", "failed"]
 
 
 class HistoryStoreError(RuntimeError):
@@ -507,6 +513,101 @@ class SupabaseHistoryStore:
         return json.loads(raw)
 
 
+class SupabaseReviewJobStore(SupabaseHistoryStore):
+    """Persist asynchronous web review jobs through Supabase's PostgREST API."""
+
+    def create_job(
+        self,
+        *,
+        target: str,
+        request_payload: dict[str, Any],
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "target": target,
+            "status": "queued",
+            "request_json": request_payload,
+        }
+        if owner_id:
+            payload["owner_id"] = owner_id
+
+        rows = self._request(
+            "POST",
+            "review_jobs",
+            [payload],
+            prefer="return=representation",
+        )
+        return _first_row(rows, "review job")
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            (
+                "review_jobs"
+                f"?id=eq.{_url_value(job_id)}"
+                f"&select={REVIEW_JOB_COLUMNS}"
+                "&limit=1"
+            ),
+        )
+        ensured_rows = _ensure_rows(rows, "review jobs")
+        return ensured_rows[0] if ensured_rows else None
+
+    def update_job(
+        self,
+        job_id: str,
+        *,
+        status: ReviewJobStatus,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "status": status,
+            "updated_at": _utc_now(),
+        }
+        if status == "running":
+            payload["started_at"] = _utc_now()
+            payload["error"] = None
+        if status in {"completed", "failed"}:
+            payload["completed_at"] = _utc_now()
+        if result is not None:
+            payload["result_json"] = result
+        if error is not None:
+            payload["error"] = error
+
+        rows = self._request(
+            "PATCH",
+            (
+                "review_jobs"
+                f"?id=eq.{_url_value(job_id)}"
+                f"&select={REVIEW_JOB_COLUMNS}"
+            ),
+            payload,
+            prefer="return=representation",
+        )
+        return _first_row(rows, "review job")
+
+    def fail_stale_running_jobs(self, *, max_age_minutes: int = 120) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+        payload = {
+            "status": "failed",
+            "error": "Review job was marked failed after stalling.",
+            "updated_at": _utc_now(),
+            "completed_at": _utc_now(),
+        }
+        rows = self._request(
+            "PATCH",
+            (
+                "review_jobs"
+                "?status=eq.running"
+                f"&updated_at=lt.{_url_value(cutoff.isoformat())}"
+                f"&select={REVIEW_JOB_COLUMNS}"
+            ),
+            payload,
+            prefer="return=representation",
+        )
+        return len(_ensure_rows(rows, "stale review jobs"))
+
+
 def _first_row(rows: Any, label: str) -> dict[str, Any]:
     if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
         raise HistoryStoreError(f"Supabase did not return a {label} row.")
@@ -530,6 +631,10 @@ def _require_id(row: dict[str, Any], label: str) -> str:
 
 def _url_value(value: str) -> str:
     return quote(value, safe="")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _owner_filter(owner_id: str | None) -> str:

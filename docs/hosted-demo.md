@@ -11,7 +11,7 @@ The frontend can always show the built-in sample report through `Demo`. Signed-i
 ## 1. Prepare Supabase
 
 1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the SQL Editor.
+2. Run `supabase/schema.sql` in the SQL Editor. For an existing project, run the migrations in `supabase/migrations`, including `003_review_jobs.sql`.
 3. Run `supabase/verify_history_schema.sql`; every row should return `status = pass`.
 4. In Auth settings, enable Email provider.
 5. Add redirect URLs:
@@ -44,6 +44,7 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_public_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 REPO_REVIEW_CORS_ORIGINS=https://zhejian-zheng.github.io
+REPO_REVIEW_JOB_STORE=supabase
 OPENROUTER_API_KEY=optional_openrouter_key
 OPENAI_API_KEY=optional_openai_key
 ```

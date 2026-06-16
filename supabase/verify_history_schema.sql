@@ -14,6 +14,11 @@ with checks as (
     'saved review report runs'
   union all
   select
+    'table: review_jobs',
+    to_regclass('public.review_jobs') is not null,
+    'persistent async web review jobs'
+  union all
+  select
     'table: findings',
     to_regclass('public.findings') is not null,
     'per-run finding snapshots'
@@ -73,6 +78,28 @@ with checks as (
     'anonymous CLI/server history rows stay unique by repo URL'
   union all
   select
+    'index: review_jobs_owner_created_idx',
+    exists (
+      select 1
+      from pg_indexes
+      where schemaname = 'public'
+        and tablename = 'review_jobs'
+        and indexname = 'review_jobs_owner_created_idx'
+    ),
+    'fast review job lookup by owner and created_at'
+  union all
+  select
+    'index: review_jobs_status_updated_idx',
+    exists (
+      select 1
+      from pg_indexes
+      where schemaname = 'public'
+        and tablename = 'review_jobs'
+        and indexname = 'review_jobs_status_updated_idx'
+    ),
+    'fast stale running job cleanup'
+  union all
+  select
     'rls: repositories',
     exists (
       select 1
@@ -95,6 +122,18 @@ with checks as (
         and c.relrowsecurity
     ),
     'row level security enabled for review runs'
+  union all
+  select
+    'rls: review_jobs',
+    exists (
+      select 1
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public'
+        and c.relname = 'review_jobs'
+        and c.relrowsecurity
+    ),
+    'row level security enabled for async review jobs'
   union all
   select
     'rls: findings',
@@ -141,6 +180,17 @@ with checks as (
         and policyname = 'review_runs_select_own'
     ),
     'review runs are readable through owned repositories'
+  union all
+  select
+    'policy: review_jobs_select_own',
+    exists (
+      select 1
+      from pg_policies
+      where schemaname = 'public'
+        and tablename = 'review_jobs'
+        and policyname = 'review_jobs_select_own'
+    ),
+    'authenticated users can only select their own async review jobs'
   union all
   select
     'policy: findings_select_own',

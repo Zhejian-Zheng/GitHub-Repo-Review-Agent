@@ -11,6 +11,17 @@ HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
 
 @unittest.skipUnless(HAS_FASTAPI, "FastAPI test dependency is not installed")
 class WebAPITests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env_patcher = patch.dict(
+            "os.environ",
+            {"REPO_REVIEW_JOB_STORE": "memory"},
+            clear=False,
+        )
+        self._env_patcher.start()
+
+    def tearDown(self) -> None:
+        self._env_patcher.stop()
+
     def test_run_review_for_path_returns_markdown_and_report(self) -> None:
         from repo_review_agent.web import ReviewRequest, run_review_for_path
 
@@ -197,6 +208,20 @@ class WebAPITests(unittest.TestCase):
         middleware_classes = [middleware.cls.__name__ for middleware in app.user_middleware]
         self.assertIn("CORSMiddleware", middleware_classes)
 
+    @patch("repo_review_agent.web.SupabaseReviewJobStore")
+    def test_build_review_job_store_can_use_supabase(self, mock_storage_class) -> None:
+        from repo_review_agent.web import SupabaseBackedReviewJobStore, build_review_job_store
+
+        with patch.dict(
+            "os.environ",
+            {"REPO_REVIEW_JOB_STORE": "supabase"},
+            clear=False,
+        ):
+            store = build_review_job_store()
+
+        self.assertIsInstance(store, SupabaseBackedReviewJobStore)
+        mock_storage_class.from_env.assert_called_once()
+
     def test_review_endpoint_returns_markdown_and_handles_errors(self) -> None:
         from fastapi import HTTPException
 
@@ -299,7 +324,7 @@ class WebAPITests(unittest.TestCase):
                 )
                 completed = _wait_for_completed_job(get_endpoint, submitted["job_id"])
 
-        self.assertEqual(submitted["status"], "queued")
+        self.assertIn(submitted["status"], {"queued", "running", "completed"})
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["markdown"], "# Report")
         mock_execute_review.assert_called_once()

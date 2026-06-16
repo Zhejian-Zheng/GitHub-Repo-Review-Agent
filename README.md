@@ -159,7 +159,7 @@ repo-review . --agent --report-language zh-CN --output review-report.zh.md
 Save review history to Supabase:
 
 1. Open your Supabase SQL Editor and run [`supabase/schema.sql`](supabase/schema.sql).
-   If you created the project with an earlier version of this schema, run it again or run [`supabase/migrations/002_repository_ownership_hardening.sql`](supabase/migrations/002_repository_ownership_hardening.sql). The upgrade removes the old global `repo_url` uniqueness rule, adds per-user repository isolation, switches repository ownership cleanup to `on delete cascade`, and adds the project-list index used by the backend History API.
+   If you created the project with an earlier version of this schema, run it again or run the migrations in [`supabase/migrations`](supabase/migrations), including [`002_repository_ownership_hardening.sql`](supabase/migrations/002_repository_ownership_hardening.sql) and [`003_review_jobs.sql`](supabase/migrations/003_review_jobs.sql). These upgrades add per-user repository isolation, cascade owner cleanup, project-list indexes, and the persistent `review_jobs` table used by the hosted web API.
 2. Run [`supabase/verify_history_schema.sql`](supabase/verify_history_schema.sql) in the SQL Editor. Every row should return `status = pass`.
 3. Set server-side environment variables:
 
@@ -208,8 +208,9 @@ When a user signs in, the frontend sends their Supabase access token to the Fast
 
 The web UI submits scans through an asynchronous job API:
 
-- `POST /review/jobs` creates an in-memory review job and returns a `job_id`.
+- `POST /review/jobs` creates a review job and returns a `job_id`.
 - `GET /review/jobs/{job_id}` returns `queued`, `running`, `completed`, or `failed`, plus the final report when complete.
+- `REPO_REVIEW_JOB_STORE=supabase` persists job state and results to Supabase `review_jobs`; `memory` keeps the lightweight local-only store.
 - `REPO_REVIEW_JOB_WORKERS` controls the number of background worker threads. The default is `2`.
 
 The original synchronous `POST /review` endpoint is still available for scripts and compatibility.

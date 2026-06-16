@@ -28,6 +28,19 @@ class SupabaseSchemaTests(unittest.TestCase):
 
         self.assertIn("001_initial_schema.sql", migrations)
         self.assertIn("002_repository_ownership_hardening.sql", migrations)
+        self.assertIn("003_review_jobs.sql", migrations)
+
+    def test_schema_persists_async_review_jobs(self) -> None:
+        schema = SCHEMA.read_text(encoding="utf-8").lower()
+
+        self.assertIn("create table if not exists public.review_jobs", schema)
+        self.assertIn("status in ('queued', 'running', 'completed', 'failed')", schema)
+        self.assertIn("request_json jsonb not null", schema)
+        self.assertIn("result_json jsonb", schema)
+        self.assertIn("review_jobs_owner_created_idx", schema)
+        self.assertIn("review_jobs_status_updated_idx", schema)
+        self.assertIn("alter table public.review_jobs enable row level security", schema)
+        self.assertIn("review_jobs_select_own", schema)
 
     def test_schema_verification_script_checks_ownership_hardening(self) -> None:
         verifier = VERIFY_SCHEMA.read_text(encoding="utf-8").lower()
@@ -37,6 +50,10 @@ class SupabaseSchemaTests(unittest.TestCase):
         self.assertIn("repositories_owner_repo_url_unique_idx", verifier)
         self.assertIn("repositories_anonymous_repo_url_unique_idx", verifier)
         self.assertIn("repositories_select_own", verifier)
+        self.assertIn("table: review_jobs", verifier)
+        self.assertIn("review_jobs_owner_created_idx", verifier)
+        self.assertIn("review_jobs_status_updated_idx", verifier)
+        self.assertIn("review_jobs_select_own", verifier)
 
 
 if __name__ == "__main__":

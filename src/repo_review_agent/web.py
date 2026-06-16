@@ -15,7 +15,12 @@ from .analyzer import analyze_repository
 from .auth import AuthError, AuthUser, bearer_token_from_headers, get_supabase_user
 from .cli import resolve_target
 from .function_agent import OpenAIFunctionCallingAgent
-from .history import HistoryNotFoundError, HistoryStoreError, SupabaseHistoryStore
+from .history import (
+    HistoryNotFoundError,
+    HistoryStoreError,
+    SupabaseHistoryStore,
+    SupabaseReviewJobStore,
+)
 from .i18n import localize_report
 from .llm import AIProviderError, add_ai_review, attach_ai_error
 from .report import render_markdown
@@ -179,10 +184,83 @@ class InMemoryReviewJobStore:
             job.error = error
 
 
+class SupabaseBackedReviewJobStore:
+    def __init__(
+        self,
+        *,
+        storage: SupabaseReviewJobStore | None = None,
+        max_workers: int = WEB_JOB_WORKERS,
+    ) -> None:
+        self._storage = storage or SupabaseReviewJobStore.from_env()
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="repo-review")
+
+    def submit(self, *, request: ReviewRequest, user: AuthUser | None) -> ReviewJob:
+        row = self._storage.create_job(
+            target=request.target,
+            request_payload=_review_request_payload(request),
+            owner_id=user.id if user else None,
+        )
+        job = _job_from_supabase_row(row)
+
+        request_copy = copy.deepcopy(request)
+        user_copy = copy.deepcopy(user)
+        self._executor.submit(self._run, job.id, request_copy, user_copy)
+        return job
+
+    def get(self, job_id: str) -> ReviewJob | None:
+        row = self._storage.get_job(job_id)
+        if row is None:
+            return None
+        return _job_from_supabase_row(row)
+
+    def fail_stale_running_jobs(self) -> int:
+        return self._storage.fail_stale_running_jobs()
+
+    def _run(self, job_id: str, request: ReviewRequest, user: AuthUser | None) -> None:
+        try:
+            self._storage.update_job(job_id, status="running")
+            result = execute_review_request(request, user)
+        except (AIProviderError, RuntimeError, SystemExit, HistoryStoreError, PermissionError) as exc:
+            self._mark_failed(job_id, str(exc))
+        except Exception as exc:  # pragma: no cover - defensive job boundary.
+            self._mark_failed(job_id, f"Unexpected review job failure: {exc}")
+        else:
+            self._storage.update_job(job_id, status="completed", result=result)
+
+    def _mark_failed(self, job_id: str, error: str) -> None:
+        try:
+            self._storage.update_job(job_id, status="failed", error=error)
+        except HistoryStoreError:
+            return
+
+
+def build_review_job_store() -> InMemoryReviewJobStore | SupabaseBackedReviewJobStore:
+    mode = os.environ.get("REPO_REVIEW_JOB_STORE", "auto").strip().lower()
+    if mode == "memory":
+        return InMemoryReviewJobStore()
+    if mode == "supabase":
+        return SupabaseBackedReviewJobStore()
+    if os.environ.get("SUPABASE_URL") and (
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
+    ):
+        return SupabaseBackedReviewJobStore()
+    return InMemoryReviewJobStore()
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0")
     configure_cors(app)
-    review_jobs = InMemoryReviewJobStore()
+    review_jobs = build_review_job_store()
+
+    @app.on_event("startup")
+    def fail_stale_review_jobs() -> None:
+        fail_stale = getattr(review_jobs, "fail_stale_running_jobs", None)
+        if not fail_stale:
+            return
+        try:
+            fail_stale()
+        except HistoryStoreError:
+            return
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -211,13 +289,19 @@ def create_app() -> FastAPI:
         enforce_public_api_controls(http_request, request.target)
         if request.save_history and user is None:
             raise HTTPException(status_code=401, detail="Sign in before saving review history.")
-        job = review_jobs.submit(request=request, user=user)
+        try:
+            job = review_jobs.submit(request=request, user=user)
+        except HistoryStoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return job.to_dict(include_result=False)
 
     @app.get("/review/jobs/{job_id}")
     def get_review_job(http_request: Request, job_id: str) -> dict:
         user = authenticated_user_from_request(http_request)
-        job = review_jobs.get(job_id)
+        try:
+            job = review_jobs.get(job_id)
+        except HistoryStoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if job is None:
             raise HTTPException(status_code=404, detail="Review job was not found.")
         if job.owner_id and (user is None or user.id != job.owner_id):
@@ -357,6 +441,34 @@ def run_review_for_path(request: ReviewRequest, repo_path: Path):
                 error=str(exc),
             )
     return report
+
+
+def _review_request_payload(request: ReviewRequest) -> dict[str, Any]:
+    if hasattr(request, "model_dump"):
+        return request.model_dump()
+    return request.dict()
+
+
+def _job_from_supabase_row(row: dict[str, Any]) -> ReviewJob:
+    status = str(row.get("status") or "")
+    if status not in {"queued", "running", "completed", "failed"}:
+        raise HistoryStoreError("Supabase review job row has an invalid status.")
+
+    result = row.get("result_json")
+    if result is not None and not isinstance(result, dict):
+        raise HistoryStoreError("Supabase review job result_json must be an object.")
+
+    return ReviewJob(
+        id=str(row.get("id") or ""),
+        status=status,
+        owner_id=row.get("owner_id"),
+        owner_email=None,
+        created_at=str(row.get("created_at") or ""),
+        updated_at=str(row.get("updated_at") or ""),
+        target=str(row.get("target") or ""),
+        result=result,
+        error=row.get("error"),
+    )
 
 
 def _utc_now() -> str:

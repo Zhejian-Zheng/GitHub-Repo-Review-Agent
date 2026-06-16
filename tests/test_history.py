@@ -8,6 +8,7 @@ from repo_review_agent.history import (
     FindingSnapshot,
     HistoryStoreError,
     SupabaseHistoryStore,
+    SupabaseReviewJobStore,
     calculate_health_score,
     compare_findings,
     finding_fingerprint,
@@ -94,6 +95,48 @@ class FakeSupabaseHistoryStore(SupabaseHistoryStore):
             ]
         if path == "review_runs":
             return [{"id": "run-id"}]
+        return []
+
+
+class FakeSupabaseReviewJobStore(SupabaseReviewJobStore):
+    def __init__(self) -> None:
+        super().__init__(supabase_url="https://example.supabase.co", service_key="service-key")
+        self.calls: list[tuple[str, str, dict | list[dict] | None, str | None]] = []
+        self.row: dict | None = None
+
+    def _request(self, method, path, body=None, *, prefer=None):  # type: ignore[no-untyped-def]
+        self.calls.append((method, path, body, prefer))
+        if method == "POST" and path == "review_jobs":
+            payload = body[0]
+            self.row = {
+                "id": "job-id",
+                "created_at": "2026-06-16T00:00:00+00:00",
+                "updated_at": "2026-06-16T00:00:00+00:00",
+                "started_at": None,
+                "completed_at": None,
+                "result_json": None,
+                "error": None,
+                **payload,
+            }
+            return [dict(self.row)]
+        if method == "GET" and path.startswith("review_jobs?id"):
+            return [dict(self.row)] if self.row else []
+        if method == "PATCH" and path.startswith("review_jobs?"):
+            if self.row is None:
+                self.row = {
+                    "id": "job-id",
+                    "owner_id": "user-id",
+                    "target": "https://github.com/owner/repo",
+                    "request_json": {},
+                    "created_at": "2026-06-16T00:00:00+00:00",
+                    "updated_at": "2026-06-16T00:00:00+00:00",
+                    "started_at": None,
+                    "completed_at": None,
+                    "result_json": None,
+                    "error": None,
+                }
+            self.row.update(body)
+            return [dict(self.row)]
         return []
 
 
@@ -274,6 +317,58 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(detail["latestRun"]["id"], "run-id")
         self.assertEqual([finding["title"] for finding in detail["findings"]], ["High", "Low"])
         self.assertEqual(detail["aiReview"]["summary"], "AI summary")
+
+    def test_supabase_review_job_store_creates_gets_and_updates_jobs(self) -> None:
+        store = FakeSupabaseReviewJobStore()
+
+        created = store.create_job(
+            target="https://github.com/owner/repo",
+            request_payload={"mode": "direct"},
+            owner_id="user-id",
+        )
+        fetched = store.get_job("job-id")
+        updated = store.update_job(
+            "job-id",
+            status="completed",
+            result={"markdown": "# Report"},
+        )
+
+        self.assertEqual(created["id"], "job-id")
+        self.assertEqual(created["status"], "queued")
+        self.assertEqual(created["owner_id"], "user-id")
+        self.assertEqual(created["request_json"], {"mode": "direct"})
+        self.assertEqual(fetched["target"], "https://github.com/owner/repo")
+        self.assertEqual(updated["status"], "completed")
+        self.assertEqual(updated["result_json"], {"markdown": "# Report"})
+        create_call = next(call for call in store.calls if call[0] == "POST")
+        self.assertEqual(create_call[3], "return=representation")
+        get_call = next(call for call in store.calls if call[0] == "GET")
+        self.assertIn("id=eq.job-id", get_call[1])
+
+    def test_supabase_review_job_store_marks_stale_running_jobs_failed(self) -> None:
+        store = FakeSupabaseReviewJobStore()
+        store.row = {
+            "id": "job-id",
+            "owner_id": "user-id",
+            "status": "running",
+            "target": "https://github.com/owner/repo",
+            "request_json": {},
+            "result_json": None,
+            "error": None,
+            "created_at": "2026-06-16T00:00:00+00:00",
+            "updated_at": "2026-06-16T00:00:00+00:00",
+            "started_at": "2026-06-16T00:00:00+00:00",
+            "completed_at": None,
+        }
+
+        count = store.fail_stale_running_jobs(max_age_minutes=30)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(store.row["status"], "failed")
+        stale_call = store.calls[-1]
+        self.assertEqual(stale_call[0], "PATCH")
+        self.assertIn("status=eq.running", stale_call[1])
+        self.assertIn("updated_at=lt.", stale_call[1])
 
     @patch.dict(
         os.environ,

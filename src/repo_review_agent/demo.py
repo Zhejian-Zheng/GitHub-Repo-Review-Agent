@@ -24,6 +24,10 @@ SCHEMA_PROBES = {
         "framework_signals_json,report_json,report_markdown,diff_json,"
         "new_findings_count,existing_findings_count,resolved_findings_count,created_at"
     ),
+    "review_jobs": (
+        "id,owner_id,status,target,request_json,result_json,error,"
+        "created_at,updated_at,started_at,completed_at"
+    ),
     "findings": (
         "id,review_run_id,fingerprint,title,severity,category,evidence_json,"
         "evidence_paths_json,recommendation,status,created_at"
