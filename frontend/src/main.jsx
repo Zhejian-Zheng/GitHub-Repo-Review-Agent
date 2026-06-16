@@ -574,6 +574,7 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
   const [mode, setMode] = useState("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const isChinese = language === "zh-CN";
@@ -581,6 +582,10 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
   const submitAuth = async (event) => {
     event.preventDefault();
     setError("");
+    if (mode === "sign-up" && password !== confirmPassword) {
+      setError(isChinese ? "两次输入的密码不一致。" : "Passwords do not match.");
+      return;
+    }
     setIsSubmitting(true);
     try {
       if (mode === "sign-up") {
@@ -589,6 +594,7 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
         await onSignIn({ email, password });
       }
       setPassword("");
+      setConfirmPassword("");
     } catch (authError) {
       setError(authError.message);
     } finally {
@@ -677,6 +683,21 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
               required
             />
           </label>
+
+          {mode === "sign-up" ? (
+            <label className="auth-field">
+              <span>{isChinese ? "确认密码" : "Confirm password"}</span>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                placeholder={isChinese ? "再次输入密码" : "Enter password again"}
+                autoComplete="new-password"
+                minLength={6}
+                required
+              />
+            </label>
+          ) : null}
 
           <label className="auth-field">
             <span>{isChinese ? "密码" : "Password"}</span>

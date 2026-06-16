@@ -180,14 +180,34 @@
   }
 
   .auth-tabs-large {
-    border-radius: 8px;
-    padding: 4px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    border-radius: 10px;
+    background: #f1f3f6;
+    padding: 6px;
   }
 
   .auth-tabs-large button {
-    min-height: 38px;
-    border-radius: 6px;
-    font-size: 14px;
+    min-height: 48px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: #4b5563;
+    font-size: 16px;
+    font-weight: 900;
+  }
+
+  .auth-tabs-large button.active {
+    border-color: #111113;
+    background: #111113;
+    color: #ffffff;
+    box-shadow: 0 6px 18px rgba(17, 17, 19, 0.18);
+  }
+
+  .auth-tabs-large button:not(.active):hover {
+    border-color: #cfd5dd;
+    background: #ffffff;
+    color: #111827;
   }
 
   .auth-field {
