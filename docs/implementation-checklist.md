@@ -22,9 +22,12 @@ This project is intended to demonstrate a lightweight but realistic AI agent eng
 - Shared prompt-tuning guidance and few-shot JSON examples for AI review synthesis and ChatGPT agent output.
 - Supabase/Postgres history schema plus CLI persistence for review runs, health scores, and new/existing/resolved finding diffs.
 - Supabase email/password login for the web UI, expiring-session refresh, backend JWT verification, and per-user authenticated history persistence.
+- Supabase schema migrations, per-user repository uniqueness, owner cascade cleanup, and owner history query indexes.
 - Signed-in project detail view with latest score, top risks, AI summary, issue backlog, historical scans, and score trend.
 - In-memory asynchronous web review jobs with submit/status endpoints and frontend polling.
 - Backend History API for authenticated repository lists and project details, replacing direct browser-to-Supabase history reads.
+- Supabase-backed demo readiness command, schema verification SQL, and browser demo runbook.
+- Hosted demo deployment path with Render backend blueprint, GitHub Pages frontend variables, CORS support, and live demo README guidance.
 
 ## Resume Summary
 
@@ -36,4 +39,5 @@ Built a hybrid AI repository review agent that combines deterministic static ana
 - Replace in-memory web review jobs with a durable queue such as Redis/RQ or Celery for multi-instance deployments.
 - Add line-level GitHub Checks annotations for findings with precise file paths.
 - Add screenshots of the web UI and sample report.
+- Add screenshots of the hosted web UI after the public demo is deployed.
 - Expand the evaluation fixture set across more stacks such as Django, Next.js, Go services, and monorepos.

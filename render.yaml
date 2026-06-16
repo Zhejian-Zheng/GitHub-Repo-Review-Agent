@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: github-repo-review-agent-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./deploy/render.Dockerfile
+    dockerContext: .
+    dockerCommand: repo-review-web
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: REPO_REVIEW_ALLOW_LOCAL_TARGETS
+        value: false
+      - key: REPO_REVIEW_REQUIRE_AUTH
+        value: true
+      - key: REPO_REVIEW_RATE_LIMIT_PER_MINUTE
+        value: 20
+      - key: REPO_REVIEW_MAX_FILES_LIMIT
+        value: 1000
+      - key: REPO_REVIEW_MAX_FILE_SIZE_LIMIT
+        value: 1000000
+      - key: REPO_REVIEW_JOB_WORKERS
+        value: 2
+      - key: REPO_REVIEW_CORS_ORIGINS
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openrouter/auto
+      - key: OPENROUTER_APP_TITLE
+        value: GitHub Repo Review Agent
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5-mini

@@ -1,4 +1,4 @@
-import { authConfig } from "./authClient";
+import { authConfig, backendUrl } from "./authClient";
 
 const DEFAULT_POLL_INTERVAL_MS = 1200;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -56,7 +56,7 @@ async function reviewJobRequest(path, { method, accessToken, body } = {}) {
     headers.Authorization = `Bearer ${accessToken}`;
   }
 
-  const response = await fetch(path, {
+  const response = await fetch(backendUrl(path), {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined

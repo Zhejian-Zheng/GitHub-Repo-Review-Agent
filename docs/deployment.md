@@ -1,5 +1,43 @@
 # Deployment Guide
 
+## Recommended Hosted Demo
+
+For a lightweight public portfolio demo, use:
+
+```text
+GitHub Pages static frontend -> Render FastAPI backend -> Supabase Auth + history tables
+```
+
+This repository includes:
+
+- `render.yaml` for a Render Blueprint web service.
+- `deploy/render.Dockerfile` for the FastAPI backend container.
+- `.github/workflows/pages.yml` for the GitHub Pages frontend.
+- `frontend/.env.production.example` for static-hosting environment variables.
+
+Follow [Hosted Demo: Render + GitHub Pages](hosted-demo.md) for the full setup.
+
+Key production values:
+
+```bash
+REPO_REVIEW_ALLOW_LOCAL_TARGETS=false
+REPO_REVIEW_REQUIRE_AUTH=true
+REPO_REVIEW_CORS_ORIGINS=https://zhejian-zheng.github.io
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your_public_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+
+For GitHub Pages repository variables:
+
+```text
+REPO_REVIEW_API_BASE_URL=https://github-repo-review-agent-api.onrender.com
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_public_anon_key
+```
+
+## VPS Deployment
+
 This guide describes a small production-style deployment for the web UI:
 
 ```text
@@ -45,6 +83,13 @@ OPENROUTER_API_KEY=your_new_openrouter_key
 OPENROUTER_MODEL=openrouter/auto
 OPENROUTER_APP_TITLE=GitHub Repo Review Agent
 
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your_public_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_public_anon_key
+
+REPO_REVIEW_REQUIRE_AUTH=true
 REPO_REVIEW_ALLOW_LOCAL_TARGETS=false
 REPO_REVIEW_RATE_LIMIT_PER_MINUTE=30
 REPO_REVIEW_MAX_FILES_LIMIT=1000
@@ -52,6 +97,14 @@ REPO_REVIEW_MAX_FILE_SIZE_LIMIT=1000000
 ```
 
 Do not commit `.env`.
+
+Before sharing the demo, run:
+
+```bash
+repo-review-demo-check
+```
+
+If this reports a Supabase schema failure, apply `supabase/schema.sql` or the latest migration, then run `supabase/verify_history_schema.sql` in the Supabase SQL Editor.
 
 ## 4. Run the App
 

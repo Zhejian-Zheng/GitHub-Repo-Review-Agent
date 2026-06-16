@@ -1,3 +1,5 @@
+import { backendUrl } from "./authClient";
+
 export async function fetchRepositories(accessToken) {
   const data = await backendRequest("/history/repositories", accessToken);
   return data.repositories || [];
@@ -19,7 +21,7 @@ async function backendRequest(path, accessToken) {
     throw new Error("Sign in before viewing project history.");
   }
 
-  const response = await fetch(path, {
+  const response = await fetch(backendUrl(path), {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json"

@@ -177,6 +177,26 @@ class WebAPITests(unittest.TestCase):
 
         self.assertEqual(response, {"user": {"id": "user-id", "email": "user@example.com"}})
 
+    def test_healthz_endpoint_returns_ok(self) -> None:
+        from repo_review_agent.web import create_app
+
+        endpoint = _route_endpoint(create_app(), "/healthz")
+
+        self.assertEqual(endpoint(), {"status": "ok"})
+
+    def test_create_app_configures_cors_from_environment(self) -> None:
+        from repo_review_agent.web import create_app
+
+        with patch.dict(
+            "os.environ",
+            {"REPO_REVIEW_CORS_ORIGINS": "https://example.github.io, https://demo.example.com/"},
+            clear=False,
+        ):
+            app = create_app()
+
+        middleware_classes = [middleware.cls.__name__ for middleware in app.user_middleware]
+        self.assertIn("CORSMiddleware", middleware_classes)
+
     def test_review_endpoint_returns_markdown_and_handles_errors(self) -> None:
         from fastapi import HTTPException
 
@@ -391,14 +411,17 @@ class WebAPITests(unittest.TestCase):
     def test_main_starts_uvicorn(self) -> None:
         import repo_review_agent.web as web
 
-        with patch.object(web.uvicorn, "run") as mock_run:
+        with (
+            patch.dict("os.environ", {"PORT": "10000"}, clear=False),
+            patch.object(web.uvicorn, "run") as mock_run,
+        ):
             web.main()
 
         mock_run.assert_called_once_with(
             "repo_review_agent.web:create_app",
             factory=True,
             host="0.0.0.0",
-            port=8000,
+            port=10000,
         )
 
 

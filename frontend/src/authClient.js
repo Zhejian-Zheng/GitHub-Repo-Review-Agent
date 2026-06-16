@@ -4,8 +4,13 @@ const REFRESH_MARGIN_SECONDS = 60;
 export const authConfig = {
   supabaseUrl: import.meta.env.VITE_SUPABASE_URL || "",
   anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || "",
+  apiBaseUrl: (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, ""),
   apiToken: import.meta.env.VITE_REPO_REVIEW_API_TOKEN || ""
 };
+
+export function backendUrl(path) {
+  return authConfig.apiBaseUrl ? `${authConfig.apiBaseUrl}${path}` : path;
+}
 
 export function isAuthConfigured() {
   return Boolean(authConfig.supabaseUrl && authConfig.anonKey);

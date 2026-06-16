@@ -25,6 +25,7 @@ classifiers = [
 
 [project.scripts]
 repo-review = "repo_review_agent.cli:main"
+repo-review-demo-check = "repo_review_agent.demo:main"
 repo-review-web = "repo_review_agent.web:main"
 repo-review-mcp = "repo_review_agent.mcp_server:main"
 repo-review-pr-bot = "repo_review_agent.pr_bot:main"

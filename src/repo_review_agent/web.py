@@ -31,6 +31,7 @@ from .security import (
 try:
     import uvicorn
     from fastapi import FastAPI, HTTPException, Request
+    from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, HTMLResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, Field
@@ -180,7 +181,12 @@ class InMemoryReviewJobStore:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0")
+    configure_cors(app)
     review_jobs = InMemoryReviewJobStore()
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
 
     @app.get("/auth/me")
     def auth_me(http_request: Request) -> dict:
@@ -357,8 +363,32 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def configure_cors(app: FastAPI) -> None:
+    origins = _csv_env("REPO_REVIEW_CORS_ORIGINS")
+    if not origins:
+        return
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Repo-Review-Token"],
+    )
+
+
+def _csv_env(name: str) -> list[str]:
+    raw_value = os.environ.get(name, "")
+    return [value.strip().rstrip("/") for value in raw_value.split(",") if value.strip()]
+
+
 def main() -> None:
-    uvicorn.run("repo_review_agent.web:create_app", factory=True, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        "repo_review_agent.web:create_app",
+        factory=True,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "8000")),
+    )
 
 
 app = create_app()

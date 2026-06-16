@@ -15,6 +15,13 @@ GitHub Repo Review Agent is a lightweight developer tool that turns a local repo
 
 The product is designed for portfolio reviews, project handoffs, technical due diligence, and fast first-pass audits of unfamiliar codebases.
 
+## Live Demo
+
+- Frontend: [GitHub Pages demo](https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/)
+- Demo mode: click `Demo` to render the built-in sample report without a backend or login.
+- Live analysis: deploy the Render backend from [`render.yaml`](render.yaml), add the GitHub Pages repository variables, and sign in with Supabase email/password.
+- Setup guide: [Hosted Demo: Render + GitHub Pages](docs/hosted-demo.md)
+
 ## Product Snapshot
 
 - **Input**: local repository path or public GitHub repository URL.
@@ -152,8 +159,9 @@ repo-review . --agent --report-language zh-CN --output review-report.zh.md
 Save review history to Supabase:
 
 1. Open your Supabase SQL Editor and run [`supabase/schema.sql`](supabase/schema.sql).
-   If you created the project with an earlier version of this schema, run it again. It removes the old global `repo_url` uniqueness rule and replaces it with per-user repository isolation.
-2. Set server-side environment variables:
+   If you created the project with an earlier version of this schema, run it again or run [`supabase/migrations/002_repository_ownership_hardening.sql`](supabase/migrations/002_repository_ownership_hardening.sql). The upgrade removes the old global `repo_url` uniqueness rule, adds per-user repository isolation, switches repository ownership cleanup to `on delete cascade`, and adds the project-list index used by the backend History API.
+2. Run [`supabase/verify_history_schema.sql`](supabase/verify_history_schema.sql) in the SQL Editor. Every row should return `status = pass`.
+3. Set server-side environment variables:
 
 ```bash
 export SUPABASE_URL="https://your-project.supabase.co"
@@ -161,7 +169,7 @@ export SUPABASE_ANON_KEY="your_public_anon_key"
 export SUPABASE_SERVICE_ROLE_KEY="your_service_role_key"
 ```
 
-3. Run a scan with history persistence:
+4. Run a scan with history persistence:
 
 ```bash
 repo-review https://github.com/owner/repo --save-history --output review-report.md
@@ -179,6 +187,12 @@ export VITE_SUPABASE_ANON_KEY="your_public_anon_key"
 export SUPABASE_URL="https://your-project.supabase.co"
 export SUPABASE_ANON_KEY="your_public_anon_key"
 export SUPABASE_SERVICE_ROLE_KEY="your_service_role_key"
+```
+
+Check whether the demo environment is ready:
+
+```bash
+repo-review-demo-check
 ```
 
 Build and run the web app:
@@ -208,6 +222,8 @@ Repository history is read through backend APIs instead of direct browser-to-Sup
 - `GET /history/repositories/{repository_id}`
 
 These endpoints verify the Supabase access token, use the server-side service role key, and apply the authenticated user's `owner_id` before returning history rows.
+
+For a full browser demo checklist, see [`docs/demo-runbook.md`](docs/demo-runbook.md).
 
 Preview GitHub issues from findings:
 
@@ -344,16 +360,24 @@ For static hosting demos, use the `Demo` button in the frontend. It renders a bu
 
 ## GitHub Pages Static Demo
 
-This repository includes a GitHub Pages workflow that deploys the React frontend as a static portfolio demo. The static demo can show the built-in sample report through `Demo`, but live repository analysis still requires the FastAPI backend.
+This repository includes a GitHub Pages workflow that deploys the React frontend as a portfolio demo. The frontend can show the built-in sample report through `Demo`, and it can run live repository analysis when `VITE_API_BASE_URL` points at the deployed FastAPI backend.
 
 To enable it:
 
 1. Push the repository to GitHub.
 2. Open `Settings -> Pages`.
 3. Set the source to `GitHub Actions`.
-4. Run the `GitHub Pages Demo` workflow or push to `main`.
+4. Add repository variables under `Settings -> Secrets and variables -> Actions -> Variables`:
 
-The workflow builds `frontend/dist` with the correct GitHub Pages base path.
+```text
+REPO_REVIEW_API_BASE_URL=https://github-repo-review-agent-api.onrender.com
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_public_anon_key
+```
+
+5. Run the `GitHub Pages Demo` workflow or push to `main`.
+
+The workflow builds `frontend/dist` with the correct GitHub Pages base path and injects the public frontend configuration. For the full hosted setup, including Render and Supabase Auth redirect URLs, see [Hosted Demo](docs/hosted-demo.md).
 
 Run the React frontend in development mode:
 
@@ -364,7 +388,7 @@ npm install
 npm run dev
 ```
 
-Then open `http://localhost:5173`. Vite proxies `/review` to the FastAPI backend on `http://localhost:8000`.
+Then open `http://localhost:5173`. Vite proxies `/review` to the FastAPI backend on `http://localhost:8000`. For split hosting, set `VITE_API_BASE_URL` to the deployed backend URL.
 
 Build the React frontend and serve it from FastAPI:
 
@@ -387,7 +411,7 @@ curl -X POST http://localhost:8000/review \
   -d '{"target": ".", "mode": "agent", "ai_provider": "openrouter", "ai_model": "openrouter/auto", "report_language": "zh-CN"}'
 ```
 
-For public demos, keep `REPO_REVIEW_ALLOW_LOCAL_TARGETS=false` and set `REPO_REVIEW_RATE_LIMIT_PER_MINUTE=30` or lower so visitors can only review GitHub URLs and cannot spam the endpoint.
+For public demos, keep `REPO_REVIEW_ALLOW_LOCAL_TARGETS=false`, set `REPO_REVIEW_REQUIRE_AUTH=true`, configure `REPO_REVIEW_CORS_ORIGINS` with the frontend origin, and set `REPO_REVIEW_RATE_LIMIT_PER_MINUTE=30` or lower so visitors can only review GitHub URLs and cannot spam the endpoint.
 
 ## MCP Server
 
