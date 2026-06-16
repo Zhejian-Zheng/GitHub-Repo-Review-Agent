@@ -8,6 +8,7 @@ from repo_review_agent.llm import (
     add_ai_review,
     attach_ai_error,
     build_review_prompt,
+    coerce_plain_text_review,
     extract_json_object,
     extract_markdown_review_sections,
     extract_openai_text,
@@ -229,6 +230,26 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(sections["project_highlights"], ["已覆盖认证、历史记录和异步任务。"])
         self.assertEqual(sections["next_steps"], ["增加端到端截图和部署检查。"])
 
+    def test_parse_ai_review_sections_accepts_plain_text_fallback(self) -> None:
+        sections = parse_ai_review_sections(
+            "This repository has a scanner, analyzer, FastAPI backend, and React UI."
+        )
+
+        self.assertEqual(
+            sections["architecture_summary"],
+            ["This repository has a scanner, analyzer, FastAPI backend, and React UI."],
+        )
+        self.assertEqual(sections["risks"], [])
+
+    def test_coerce_plain_text_review_ignores_empty_text(self) -> None:
+        sections = coerce_plain_text_review("\n\n")
+
+        self.assertFalse(any(sections.values()))
+
+    def test_parse_ai_review_sections_can_disable_text_fallback(self) -> None:
+        with self.assertRaises(AIProviderError):
+            parse_ai_review_sections("not json", allow_text_fallback=False)
+
     def test_extract_markdown_review_sections_ignores_unknown_text(self) -> None:
         sections = extract_markdown_review_sections(
             """
@@ -268,9 +289,6 @@ Scanner, analyzer, API, and web UI are separated clearly.
         self.assertEqual(sections["next_steps"], ["123"])
 
     def test_parse_ai_review_sections_rejects_invalid_or_empty_json(self) -> None:
-        with self.assertRaises(AIProviderError):
-            parse_ai_review_sections("not json")
-
         with self.assertRaises(AIProviderError):
             parse_ai_review_sections("[]")
 

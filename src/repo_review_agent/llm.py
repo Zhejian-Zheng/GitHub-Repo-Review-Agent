@@ -207,12 +207,21 @@ def _review_json_schema_example(language: str) -> dict[str, list[str]]:
     }
 
 
-def parse_ai_review_sections(raw_review: str, *, language: str | None = None) -> dict[str, list[str]]:
+def parse_ai_review_sections(
+    raw_review: str,
+    *,
+    language: str | None = None,
+    allow_text_fallback: bool = True,
+) -> dict[str, list[str]]:
     data = extract_json_object(raw_review)
     if data is None:
-        sections = extract_markdown_review_sections(raw_review)
-        if any(sections.values()):
-            return sections
+        if allow_text_fallback:
+            sections = extract_markdown_review_sections(raw_review)
+            if any(sections.values()):
+                return sections
+            sections = coerce_plain_text_review(raw_review)
+            if any(sections.values()):
+                return sections
         raise AIProviderError("AI review response was not valid JSON.")
     if not isinstance(data, dict):
         raise AIProviderError("AI review JSON must be an object.")
@@ -253,6 +262,14 @@ def extract_markdown_review_sections(raw_text: str) -> dict[str, list[str]]:
         if text:
             sections[key] = _coerce_review_items(text)
 
+    return sections
+
+
+def coerce_plain_text_review(raw_text: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {key: [] for key in AI_REVIEW_SECTION_KEYS}
+    items = _coerce_review_items(raw_text)
+    if items:
+        sections["architecture_summary"] = items
     return sections
 
 

@@ -185,7 +185,11 @@ class OpenAIFunctionCallingAgent:
 
         if final_text.strip():
             try:
-                sections = parse_ai_review_sections(final_text, language=self.report_language)
+                sections = parse_ai_review_sections(
+                    final_text,
+                    language=self.report_language,
+                    allow_text_fallback=False,
+                )
                 summary = render_ai_review_sections(sections, language=self.report_language)
                 ai_review = AIReview(
                     provider="openai-functions",
