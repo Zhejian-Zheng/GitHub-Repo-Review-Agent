@@ -18,7 +18,7 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 ## Live Demo
 
 - Frontend: [GitHub Pages demo](https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/)
-- Demo mode: click `Demo` to render the built-in sample report without a backend or login.
+- Demo mode: use `Continue as guest`, then click `Demo` to render the built-in sample report without a backend account.
 - Live analysis: deploy the Render backend from [`render.yaml`](render.yaml), add the GitHub Pages repository variables, and sign in with Supabase email/password.
 - Setup guide: [Hosted Demo: Render + GitHub Pages](docs/hosted-demo.md)
 
@@ -204,7 +204,7 @@ cd ..
 repo-review-web
 ```
 
-When a user signs in, the frontend sends their Supabase access token to the FastAPI backend. The frontend refreshes expiring sessions before loading history or saving a review, and the backend verifies the token with Supabase Auth before saving review history with the authenticated `owner_id`. Set `REPO_REVIEW_REQUIRE_AUTH=true` when you want the web API to reject anonymous review requests.
+When a user signs in, the frontend sends their Supabase access token to the FastAPI backend. The frontend refreshes expiring sessions before loading history or saving a review, and the backend verifies the token with Supabase Auth before saving review history with the authenticated `owner_id`. The web UI also has a guest mode for browsing the app and loading the built-in demo report. Set `REPO_REVIEW_REQUIRE_AUTH=true` when you want the web API to reject unauthenticated live review requests.
 
 The web UI submits scans through an asynchronous job API:
 

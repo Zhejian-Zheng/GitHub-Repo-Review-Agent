@@ -88,12 +88,13 @@ https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/
 ## 4. Acceptance Test
 
 1. Open the GitHub Pages URL.
-2. Click `Demo`; a sample report should render without the backend.
-3. Sign up or sign in with Supabase email/password.
-4. Submit a public GitHub repository URL.
-5. Confirm the job completes and the report renders.
-6. Confirm the project appears in authenticated history.
-7. Open the project detail view and confirm score, findings, run history, and trend data appear.
+2. Click `Continue as guest`.
+3. Click `Demo`; a sample report should render without a backend account.
+4. Return to sign-in, then sign up or sign in with Supabase email/password.
+5. Submit a public GitHub repository URL.
+6. Confirm the job completes and the report renders.
+7. Confirm the project appears in authenticated history.
+8. Open the project detail view and confirm score, findings, run history, and trend data appear.
 
 ## Demo Account
 

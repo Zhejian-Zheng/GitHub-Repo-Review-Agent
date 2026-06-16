@@ -7,22 +7,22 @@ export function buildDemoReport(language) {
       ? [
           "检测到主要源码语言：Python (13), JavaScript (4)。",
           "发现依赖清单：pyproject.toml, frontend/package.json。",
-          "通过 9 个测试文件检测到测试覆盖面。",
+          "通过 20+ 个测试文件检测到测试覆盖面。",
           "检测到 CI 配置：.github/workflows/ci.yml。",
-          "框架和工具信号：FastAPI, React, Docker, MCP, OpenAI Function Calling。"
+          "框架和工具信号：FastAPI, React, Docker, Supabase, Render, GitHub Pages, MCP。"
         ]
       : [
           "Primary source languages detected: Python (13), JavaScript (4).",
           "Dependency manifests found: pyproject.toml, frontend/package.json.",
-          "Test coverage surface detected through 9 test file(s).",
+          "Test coverage surface detected through 20+ test file(s).",
           "CI configuration detected: .github/workflows/ci.yml.",
-          "Framework and tooling signals: FastAPI, React, Docker, MCP, OpenAI Function Calling."
+          "Framework and tooling signals: FastAPI, React, Docker, Supabase, Render, GitHub Pages, MCP."
         ],
     metrics: {
       files_scanned: 52,
       files_skipped: 0,
       source_files: 17,
-      test_files: 9,
+      test_files: 20,
       dependency_files: 3,
       ci_files: 1,
       languages: { Python: 13, JavaScript: 4 }
@@ -30,7 +30,10 @@ export function buildDemoReport(language) {
     framework_signals: {
       FastAPI: ["src/repo_review_agent/web.py"],
       React: ["frontend/src/main.jsx"],
-      Docker: ["Dockerfile", "docker-compose.prod.yml"],
+      Docker: ["Dockerfile", "docker-compose.prod.yml", "deploy/render.Dockerfile"],
+      Render: ["render.yaml"],
+      "GitHub Pages": [".github/workflows/pages.yml"],
+      Supabase: ["supabase/schema.sql", "supabase/verify_history_schema.sql"],
       MCP: ["src/repo_review_agent/mcp_server.py"],
       "Function Calling": ["src/repo_review_agent/function_agent.py"]
     },
@@ -39,8 +42,8 @@ export function buildDemoReport(language) {
       model: "openrouter/auto",
       status: "generated",
       summary: isChinese
-        ? "## AI 架构总结\n这个项目已经从静态分析脚本扩展为一个完整的仓库评审 Agent。前端负责输入和报告展示，FastAPI 后端负责任务编排，自定义 Agent 按工具链执行扫描、文件检查、规则分析和 AI 总结。\n\n## 主要风险\n- 公开部署时需要限制请求频率和目标 URL，避免被滥用。\n- AI Provider key 必须只保存在后端环境变量中。\n\n## 项目亮点\n- 项目同时覆盖前端、后端、Docker 部署和 CI 配置，具备完整工具链雏形。\n- Agent 执行轨迹、结构化 JSON 和 Markdown 报告让评审过程更透明。\n- 支持多模型 Provider 和中英文报告，适合扩展成可演示的开发者工具。\n\n## 推荐下一步\n- 添加线上 Demo 链接和 Web UI 截图。\n- 在 CI 中持续验证 Docker build 和前端构建。"
-        : "## AI Architecture Summary\nThis project has evolved from a static analysis script into a full repository review agent. The frontend collects review inputs and renders structured reports, while the FastAPI backend orchestrates scanning, file inspection, rule-based analysis, and AI synthesis.\n\n## Top Risks\n- Public deployments need rate limits and repository URL restrictions to reduce abuse.\n- AI provider keys must stay on the backend as environment variables.\n\n## Project Highlights\n- The project covers frontend, backend, Docker deployment, and CI configuration, giving it a complete developer-tool shape.\n- Agent traces, structured JSON, and Markdown output make the review process easier to inspect.\n- Multi-provider AI support and bilingual reports make the product more flexible for demos and real use.\n\n## Recommended Next Steps\n- Add a hosted demo link and Web UI screenshots.\n- Keep Docker build and frontend build checks in CI."
+        ? "## AI 架构总结\n这个项目已经从静态分析脚本扩展为一个可部署的仓库评审平台。GitHub Pages 承载静态前端，Render 运行 FastAPI 后端，Supabase 负责登录和历史记录。\n\n## 主要风险\n- 公开部署仍然依赖正确的环境变量：CORS origin、Supabase service role key、请求频率限制和 GitHub URL 限制都必须在 Render 中保持开启。\n- AI Provider key 必须只保存在后端环境变量中。\n\n## 项目亮点\n- 项目同时覆盖前端、后端、数据库 schema、认证、Docker、Render、GitHub Pages 和 CI 配置，已经具备完整线上 demo 路径。\n- Agent 执行轨迹、结构化 JSON 和 Markdown 输出让评审过程更透明。\n- Supabase 历史记录、项目详情页和双语报告让产品形态更接近真实开发者工具。\n\n## 推荐下一步\n- 补充 Web UI 截图和端到端 demo 截图。\n- 在公开 demo 稳定后，把最终线上地址和截图放进 README。"
+        : "## AI Architecture Summary\nThis project has evolved from a static analysis script into a deployable repository review platform. GitHub Pages serves the static frontend, Render runs the FastAPI backend, and Supabase handles auth plus review history.\n\n## Top Risks\n- Public deployments still depend on correct environment variables: CORS origins, the Supabase service role key, rate limits, and GitHub URL restrictions must stay enabled on Render.\n- AI provider keys must stay on the backend as environment variables.\n\n## Project Highlights\n- The project covers frontend, backend, database schema, auth, Docker, Render, GitHub Pages, and CI configuration, giving it a complete hosted-demo path.\n- Agent traces, structured JSON, and Markdown output make the review process easier to inspect.\n- Supabase history, the project detail view, and bilingual reports make the product feel closer to a real developer tool.\n\n## Recommended Next Steps\n- Add Web UI screenshots and end-to-end demo screenshots.\n- After the public demo is stable, add the final live URL and screenshots to the README."
     },
     agent_trace: [
       {
@@ -76,28 +79,28 @@ export function buildDemoReport(language) {
     ],
     findings: [
       {
-        title: isChinese ? "补充线上 Demo 截图和部署链接" : "Add hosted demo screenshots and deployment link",
+        title: isChinese ? "补充线上 Demo 截图" : "Add hosted demo screenshots",
         severity: "low",
         category: isChinese ? "展示" : "portfolio",
         evidence: isChinese
-          ? ["项目已经具备 Web UI 和部署配置，但 README 中还没有真实截图。"]
-          : ["The project includes a Web UI and deployment config, but the README does not yet show real screenshots."],
-        evidence_paths: ["README.md", ".github/workflows/pages.yml"],
+          ? ["README 已经包含 Live Demo 入口和部署说明，但还没有真实 Web UI 截图。"]
+          : ["The README includes the live demo entry point and deployment guide, but it does not yet show real Web UI screenshots."],
+        evidence_paths: ["README.md", "docs/hosted-demo.md"],
         recommendation: isChinese
-          ? "部署后补充 Web UI 截图、示例报告截图和线上地址。"
-          : "After deployment, add Web UI screenshots, report screenshots, and the live demo URL."
+          ? "端到端测试稳定后，补充首页、报告结果和项目详情页截图。"
+          : "After the end-to-end demo is stable, add screenshots of the home page, report output, and project detail view."
       },
       {
-        title: isChinese ? "生产环境需要启用公开访问保护" : "Enable public access controls in production",
-        severity: "medium",
+        title: isChinese ? "公开部署保护已配置" : "Public deployment controls are configured",
+        severity: "info",
         category: isChinese ? "安全" : "security",
         evidence: isChinese
-          ? ["公开部署会接受用户输入的 GitHub URL，并调用后端分析流程。"]
-          : ["A public deployment accepts user-provided GitHub URLs and runs backend analysis."],
-        evidence_paths: ["src/repo_review_agent/web.py"],
+          ? ["FastAPI 后端支持 CORS 白名单、请求频率限制、登录要求和 GitHub URL 限制。"]
+          : ["The FastAPI backend supports CORS allowlists, request rate limits, login requirements, and GitHub URL restrictions."],
+        evidence_paths: ["src/repo_review_agent/web.py", "render.yaml", "docs/hosted-demo.md"],
         recommendation: isChinese
-          ? "设置 REPO_REVIEW_ALLOW_LOCAL_TARGETS=false，并启用请求频率限制。"
-          : "Set REPO_REVIEW_ALLOW_LOCAL_TARGETS=false and enable rate limiting."
+          ? "在 Render 中保持 REPO_REVIEW_ALLOW_LOCAL_TARGETS=false、REPO_REVIEW_REQUIRE_AUTH=true，并只把 service role key 放在后端环境变量中。"
+          : "Keep REPO_REVIEW_ALLOW_LOCAL_TARGETS=false and REPO_REVIEW_REQUIRE_AUTH=true on Render, and keep the service role key backend-only."
       }
     ]
   };

@@ -15,6 +15,7 @@ import {
   RefreshCw,
   RotateCcw,
   TrendingUp,
+  UserPlus,
   UserRound,
   X
 } from "lucide-react";
@@ -53,6 +54,7 @@ function App() {
   const [progressStep, setProgressStep] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [authSession, setAuthSession] = useState(() => loadStoredSession());
+  const [isGuestMode, setIsGuestMode] = useState(false);
   const [authStatus, setAuthStatus] = useState("");
   const [repositories, setRepositories] = useState([]);
   const [selectedRepository, setSelectedRepository] = useState(null);
@@ -136,6 +138,7 @@ function App() {
   }, [isRunning]);
 
   const activeRunPhase = runPhases[progressStep] ?? runPhases[0];
+  const shouldShowAuthGate = isAuthConfigured() && !authSession?.access_token && !isGuestMode;
 
   const updateField = (event) => {
     const { name, value } = event.target;
@@ -163,6 +166,7 @@ function App() {
     const nextSession = { ...session, user };
     saveStoredSession(nextSession);
     setAuthSession(nextSession);
+    setIsGuestMode(false);
     setAuthStatus(isChinese ? "已登录，后续评审会保存历史。" : "Signed in. Review history will be saved.");
   };
 
@@ -177,7 +181,17 @@ function App() {
     const nextSession = { ...session, user };
     saveStoredSession(nextSession);
     setAuthSession(nextSession);
+    setIsGuestMode(false);
     setAuthStatus(isChinese ? "账号已创建，后续评审会保存历史。" : "Account created. Review history will be saved.");
+  };
+
+  const handleGuestContinue = () => {
+    setIsGuestMode(true);
+    setAuthStatus(
+      isChinese
+        ? "游客模式已启用。可以查看 Demo；如需保存历史或运行受保护后端，请登录账号。"
+        : "Guest mode enabled. You can view the demo; sign in to save history or use protected backend reviews."
+    );
   };
 
   const handleSignOut = async () => {
@@ -185,6 +199,7 @@ function App() {
       await signOut(authSession?.access_token);
     } finally {
       setAuthSession(null);
+      setIsGuestMode(false);
       setRepositories([]);
       setSelectedRepository(null);
       setProjectDetail(null);
@@ -327,7 +342,13 @@ function App() {
         reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     } catch (error) {
-      setStatus(`Review failed: ${error.message}`);
+      const guestMessage =
+        isGuestMode && /sign in/i.test(error.message)
+          ? isChinese
+            ? "游客模式可以查看 Demo。当前后端要求登录后才能运行真实扫描。"
+            : "Guest mode can view the demo. This backend requires sign-in for live reviews."
+          : error.message;
+      setStatus(`Review failed: ${guestMessage}`);
     } finally {
       setIsRunning(false);
     }
@@ -370,6 +391,19 @@ function App() {
     });
   };
 
+  if (shouldShowAuthGate) {
+    return (
+      <AuthGate
+        language={form.report_language}
+        status={authStatus}
+        onSignIn={handleSignIn}
+        onSignUp={handleSignUp}
+        onGuestContinue={handleGuestContinue}
+        onSetLanguage={setLanguage}
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen bg-white text-ink">
       <section className="chat-home">
@@ -379,15 +413,29 @@ function App() {
           </button>
 
           <div className="top-actions">
-            <AuthPanel
-              configured={isAuthConfigured()}
-              session={authSession}
-              status={authStatus}
-              language={form.report_language}
-              onSignIn={handleSignIn}
-              onSignUp={handleSignUp}
-              onSignOut={handleSignOut}
-            />
+            {authSession?.access_token ? (
+              <AuthPanel
+                configured={isAuthConfigured()}
+                session={authSession}
+                status={authStatus}
+                language={form.report_language}
+                onSignIn={handleSignIn}
+                onSignUp={handleSignUp}
+                onSignOut={handleSignOut}
+              />
+            ) : isGuestMode ? (
+              <GuestPanel language={form.report_language} onSignIn={() => setIsGuestMode(false)} />
+            ) : (
+              <AuthPanel
+                configured={isAuthConfigured()}
+                session={authSession}
+                status={authStatus}
+                language={form.report_language}
+                onSignIn={handleSignIn}
+                onSignUp={handleSignUp}
+                onSignOut={handleSignOut}
+              />
+            )}
 
             <label className="model-select" aria-label="Model">
               <select value={selectedModelValue} onChange={updateModel}>
@@ -519,6 +567,163 @@ function App() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSetLanguage }) {
+  const [mode, setMode] = useState("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const isChinese = language === "zh-CN";
+
+  const submitAuth = async (event) => {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+    try {
+      if (mode === "sign-up") {
+        await onSignUp({ email, password });
+      } else {
+        await onSignIn({ email, password });
+      }
+      setPassword("");
+    } catch (authError) {
+      setError(authError.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <main className="auth-page">
+      <header className="auth-page-topbar">
+        <button className="brand-menu auth-brand" type="button" aria-label="RepoGPT">
+          <span>RepoGPT</span>
+        </button>
+        <div className="language-toggle" role="group" aria-label="Report language">
+          <button
+            className={isChinese ? "active" : ""}
+            type="button"
+            onClick={() => onSetLanguage("zh-CN")}
+            aria-pressed={isChinese}
+          >
+            中文
+          </button>
+          <button
+            className={!isChinese ? "active" : ""}
+            type="button"
+            onClick={() => onSetLanguage("en")}
+            aria-pressed={!isChinese}
+          >
+            EN
+          </button>
+        </div>
+      </header>
+
+      <section className="auth-hero" aria-labelledby="auth-title">
+        <div className="auth-intro">
+          <p className="auth-eyebrow">{isChinese ? "仓库评审工作台" : "Repository review workspace"}</p>
+          <h1 id="auth-title">
+            {isChinese ? "登录后追踪每一次仓库健康变化" : "Sign in to track every repository review"}
+          </h1>
+          <p>
+            {isChinese
+              ? "保存历史扫描、查看趋势、比较新增和已解决问题。游客可以先进入体验内置 Demo。"
+              : "Save review history, inspect trends, and compare new or resolved findings. Guests can continue to try the built-in demo first."}
+          </p>
+          <div className="auth-feature-row">
+            <span>{isChinese ? "Supabase 登录" : "Supabase auth"}</span>
+            <span>{isChinese ? "历史记录" : "Review history"}</span>
+            <span>{isChinese ? "游客体验" : "Guest access"}</span>
+          </div>
+        </div>
+
+        <form className="auth-card" onSubmit={submitAuth}>
+          <div className="auth-card-head">
+            <UserRound size={24} aria-hidden="true" />
+            <div>
+              <h2>{mode === "sign-up" ? (isChinese ? "创建账号" : "Create account") : isChinese ? "欢迎回来" : "Welcome back"}</h2>
+              <p>{isChinese ? "使用邮箱和密码继续。" : "Continue with email and password."}</p>
+            </div>
+          </div>
+
+          <div className="auth-tabs auth-tabs-large" role="tablist" aria-label="Authentication mode">
+            <button
+              className={mode === "sign-in" ? "active" : ""}
+              type="button"
+              onClick={() => setMode("sign-in")}
+            >
+              {isChinese ? "登录" : "Sign in"}
+            </button>
+            <button
+              className={mode === "sign-up" ? "active" : ""}
+              type="button"
+              onClick={() => setMode("sign-up")}
+            >
+              {isChinese ? "注册" : "Sign up"}
+            </button>
+          </div>
+
+          <label className="auth-field">
+            <span>{isChinese ? "邮箱" : "Email"}</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="you@example.com"
+              autoComplete="email"
+              required
+            />
+          </label>
+
+          <label className="auth-field">
+            <span>{isChinese ? "密码" : "Password"}</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder={isChinese ? "至少 6 位" : "At least 6 characters"}
+              autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
+              minLength={6}
+              required
+            />
+          </label>
+
+          <button className="auth-primary-button" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? (
+              <RotateCcw size={18} className="animate-spin" aria-hidden="true" />
+            ) : mode === "sign-up" ? (
+              <UserPlus size={18} aria-hidden="true" />
+            ) : (
+              <LogIn size={18} aria-hidden="true" />
+            )}
+            {mode === "sign-up" ? (isChinese ? "注册并进入" : "Create account") : isChinese ? "登录" : "Sign in"}
+          </button>
+
+          <button className="auth-guest-button" type="button" onClick={onGuestContinue}>
+            <UserRound size={18} aria-hidden="true" />
+            {isChinese ? "游客继续" : "Continue as guest"}
+          </button>
+
+          {error || status ? <p className={error ? "auth-error" : "auth-status"}>{error || status}</p> : null}
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function GuestPanel({ language, onSignIn }) {
+  const isChinese = language === "zh-CN";
+  return (
+    <div className="auth-compact guest">
+      <UserRound size={16} aria-hidden="true" />
+      <span>{isChinese ? "游客模式" : "Guest"}</span>
+      <button className="auth-login-button" type="button" onClick={onSignIn}>
+        {isChinese ? "登录" : "Sign in"}
+      </button>
+    </div>
   );
 }
 
