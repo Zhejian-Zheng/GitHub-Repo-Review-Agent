@@ -173,8 +173,12 @@ function App() {
   const handleSignUp = async ({ email, password }) => {
     setAuthStatus(isChinese ? "正在创建账号..." : "Creating account...");
     const session = await signUpWithPassword(email, password);
-    if (session.pending_confirmation) {
-      setAuthStatus(isChinese ? "请查看邮箱并确认账号。" : "Check your email to confirm your account.");
+    if (session.pending_confirmation || !session.access_token) {
+      setAuthStatus(
+        isChinese
+          ? "账号已创建。请查看邮箱完成验证，然后回到这里登录。"
+          : "Account created. Check your email to confirm it, then return here to sign in."
+      );
       return;
     }
     const user = session.user || (await getCurrentUser(session.access_token));
@@ -233,7 +237,7 @@ function App() {
       setRepositories([]);
       setSelectedRepository(null);
       setProjectDetail(null);
-      setAuthStatus(error.message);
+      setAuthStatus(friendlyAuthError(error.message, isChinese));
       return null;
     }
   };
@@ -354,6 +358,8 @@ function App() {
     }
   };
 
+  const authErrorMessage = (message) => friendlyAuthError(message, isChinese);
+
   const copyReport = async () => {
     if (!markdown) return;
     await navigator.clipboard.writeText(markdown);
@@ -400,6 +406,7 @@ function App() {
         onSignUp={handleSignUp}
         onGuestContinue={handleGuestContinue}
         onSetLanguage={setLanguage}
+        formatError={authErrorMessage}
       />
     );
   }
@@ -422,6 +429,7 @@ function App() {
                 onSignIn={handleSignIn}
                 onSignUp={handleSignUp}
                 onSignOut={handleSignOut}
+                formatError={authErrorMessage}
               />
             ) : isGuestMode ? (
               <GuestPanel language={form.report_language} onSignIn={() => setIsGuestMode(false)} />
@@ -434,6 +442,7 @@ function App() {
                 onSignIn={handleSignIn}
                 onSignUp={handleSignUp}
                 onSignOut={handleSignOut}
+                formatError={authErrorMessage}
               />
             )}
 
@@ -570,7 +579,15 @@ function App() {
   );
 }
 
-function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSetLanguage }) {
+function AuthGate({
+  language,
+  status,
+  onSignIn,
+  onSignUp,
+  onGuestContinue,
+  onSetLanguage,
+  formatError = (error) => error
+}) {
   const [mode, setMode] = useState("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -590,13 +607,14 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
     try {
       if (mode === "sign-up") {
         await onSignUp({ email, password });
+        setMode("sign-in");
       } else {
         await onSignIn({ email, password });
       }
       setPassword("");
       setConfirmPassword("");
     } catch (authError) {
-      setError(authError.message);
+      setError(formatError(authError.message));
     } finally {
       setIsSubmitting(false);
     }
@@ -684,6 +702,19 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
             />
           </label>
 
+          <label className="auth-field">
+            <span>{isChinese ? "密码" : "Password"}</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder={isChinese ? "至少 6 位" : "At least 6 characters"}
+              autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
+              minLength={6}
+              required
+            />
+          </label>
+
           {mode === "sign-up" ? (
             <label className="auth-field">
               <span>{isChinese ? "确认密码" : "Confirm password"}</span>
@@ -699,19 +730,6 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
             </label>
           ) : null}
 
-          <label className="auth-field">
-            <span>{isChinese ? "密码" : "Password"}</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder={isChinese ? "至少 6 位" : "At least 6 characters"}
-              autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
-              minLength={6}
-              required
-            />
-          </label>
-
           <button className="auth-primary-button" type="submit" disabled={isSubmitting}>
             {isSubmitting ? (
               <RotateCcw size={18} className="animate-spin" aria-hidden="true" />
@@ -720,7 +738,7 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
             ) : (
               <LogIn size={18} aria-hidden="true" />
             )}
-            {mode === "sign-up" ? (isChinese ? "注册并进入" : "Create account") : isChinese ? "登录" : "Sign in"}
+            {mode === "sign-up" ? (isChinese ? "创建账号" : "Create account") : isChinese ? "登录" : "Sign in"}
           </button>
 
           <button className="auth-guest-button" type="button" onClick={onGuestContinue}>
@@ -733,6 +751,21 @@ function AuthGate({ language, status, onSignIn, onSignUp, onGuestContinue, onSet
       </section>
     </main>
   );
+}
+
+function friendlyAuthError(message, isChinese) {
+  if (/valid bearer token/i.test(message || "") || /bearer token/i.test(message || "")) {
+    return isChinese
+      ? "登录凭证无效或已过期。请重新登录；如果刚注册，请先完成邮箱验证。"
+      : "Your sign-in session is missing or expired. Sign in again; if you just registered, confirm your email first.";
+  }
+  if (/email not confirmed/i.test(message || "")) {
+    return isChinese ? "请先完成邮箱验证，然后再登录。" : "Confirm your email before signing in.";
+  }
+  if (/invalid login credentials/i.test(message || "")) {
+    return isChinese ? "邮箱或密码不正确。" : "Email or password is incorrect.";
+  }
+  return message;
 }
 
 function GuestPanel({ language, onSignIn }) {
@@ -748,7 +781,16 @@ function GuestPanel({ language, onSignIn }) {
   );
 }
 
-function AuthPanel({ configured, session, status, language, onSignIn, onSignUp, onSignOut }) {
+function AuthPanel({
+  configured,
+  session,
+  status,
+  language,
+  onSignIn,
+  onSignUp,
+  onSignOut,
+  formatError = (error) => error
+}) {
   const [mode, setMode] = useState("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -785,12 +827,13 @@ function AuthPanel({ configured, session, status, language, onSignIn, onSignUp, 
     try {
       if (mode === "sign-up") {
         await onSignUp({ email, password });
+        setMode("sign-in");
       } else {
         await onSignIn({ email, password });
       }
       setPassword("");
     } catch (authError) {
-      setError(authError.message);
+      setError(formatError(authError.message));
     } finally {
       setIsSubmitting(false);
     }

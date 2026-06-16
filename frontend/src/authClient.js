@@ -130,6 +130,17 @@ function normalizeSession(data) {
       user: data.session.user || data.user || null
     };
   }
+  if (data?.id && data?.email && !data?.access_token) {
+    return {
+      access_token: null,
+      refresh_token: null,
+      token_type: "bearer",
+      expires_in: 0,
+      expires_at: null,
+      user: data,
+      pending_confirmation: true
+    };
+  }
   const expiresIn = Number(data?.expires_in || 0);
   return {
     access_token: data?.access_token || null,
