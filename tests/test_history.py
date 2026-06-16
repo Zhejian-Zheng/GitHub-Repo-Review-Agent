@@ -327,19 +327,30 @@ class HistoryTests(unittest.TestCase):
             owner_id="user-id",
         )
         fetched = store.get_job("job-id")
+        anonymous = store.create_job(
+            target="https://github.com/another/repo",
+            request_payload={"mode": "agent"},
+        )
+        running = store.update_job("job-id", status="running")
         updated = store.update_job(
             "job-id",
             status="completed",
             result={"markdown": "# Report"},
         )
+        failed = store.update_job("job-id", status="failed", error="boom")
 
         self.assertEqual(created["id"], "job-id")
         self.assertEqual(created["status"], "queued")
         self.assertEqual(created["owner_id"], "user-id")
         self.assertEqual(created["request_json"], {"mode": "direct"})
+        self.assertIsNone(anonymous.get("owner_id"))
         self.assertEqual(fetched["target"], "https://github.com/owner/repo")
+        self.assertEqual(running["status"], "running")
+        self.assertIsNone(running["error"])
         self.assertEqual(updated["status"], "completed")
         self.assertEqual(updated["result_json"], {"markdown": "# Report"})
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["error"], "boom")
         create_call = next(call for call in store.calls if call[0] == "POST")
         self.assertEqual(create_call[3], "return=representation")
         get_call = next(call for call in store.calls if call[0] == "GET")
@@ -416,6 +427,23 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(request.full_url, "https://example.supabase.co/rest/v1/repositories")
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.get_header("Prefer"), "return=representation")
+
+        mock_urlopen.return_value = FakeResponse(b"")
+        self.assertIsNone(store._request("GET", "repositories"))
+
+    def test_supabase_helpers_validate_response_shapes(self) -> None:
+        from repo_review_agent.history import _ensure_rows, _first_row, _require_id
+
+        self.assertEqual(_ensure_rows(None, "rows"), [])
+
+        with self.assertRaises(HistoryStoreError):
+            _ensure_rows([{"id": "ok"}, "bad"], "rows")
+
+        with self.assertRaises(HistoryStoreError):
+            _first_row([], "row")
+
+        with self.assertRaises(HistoryStoreError):
+            _require_id({"id": ""}, "row")
 
     @patch("repo_review_agent.history.urlopen")
     def test_supabase_request_wraps_http_and_url_errors(self, mock_urlopen) -> None:
