@@ -1,8 +1,7 @@
-from unittest.mock import patch
 import unittest
+from unittest.mock import patch
 
 from repo_review_agent.demo import collect_readiness_checks, main, render_readiness_report
-
 
 COMPLETE_ENV = {
     "SUPABASE_URL": "https://example.supabase.co",
