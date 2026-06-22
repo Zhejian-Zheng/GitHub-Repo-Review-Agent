@@ -1,11 +1,21 @@
 import json
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from repo_review_agent.linters import collect_linter_findings, ruff_findings
+from repo_review_agent.linters import (
+    _finding_for_code,
+    _first_message,
+    _relative_filename,
+    _ruff_category,
+    _ruff_severity,
+    _run_ruff,
+    collect_linter_findings,
+    ruff_findings,
+)
 from repo_review_agent.models import RepoFile, RepositorySnapshot
 
 
@@ -152,6 +162,69 @@ class RuffFindingsTests(unittest.TestCase):
 
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].category, "correctness")
+
+
+class RuffHelperTests(unittest.TestCase):
+    def test_severity_mapping(self) -> None:
+        self.assertEqual(_ruff_severity("E999"), "high")
+        self.assertEqual(_ruff_severity("syntax-error"), "high")
+        self.assertEqual(_ruff_severity("S105"), "high")
+        self.assertEqual(_ruff_severity("F401"), "medium")
+        self.assertEqual(_ruff_severity("E701"), "low")
+
+    def test_category_mapping(self) -> None:
+        self.assertEqual(_ruff_category("S105"), "security")
+        self.assertEqual(_ruff_category("syntax-error"), "correctness")
+        self.assertEqual(_ruff_category("F401"), "correctness")
+        self.assertEqual(_ruff_category("PERF401"), "performance")
+        self.assertEqual(_ruff_category("E701"), "maintainability")
+
+    def test_run_ruff_swallows_subprocess_errors(self) -> None:
+        with patch("repo_review_agent.linters.shutil.which", return_value="/usr/bin/ruff"):
+            with patch("repo_review_agent.linters.subprocess.run", side_effect=OSError):
+                self.assertEqual(_run_ruff(Path("."), timeout=1), [])
+            with patch(
+                "repo_review_agent.linters.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("ruff", 1),
+            ):
+                self.assertEqual(_run_ruff(Path("."), timeout=1), [])
+
+    def test_relative_filename_edge_cases(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self.assertEqual(_relative_filename({}, root), "")
+            self.assertEqual(_relative_filename({"filename": "/etc/hosts"}, root), "hosts")
+
+    def test_first_message_empty_when_all_blank(self) -> None:
+        self.assertEqual(_first_message([{"message": ""}, {"message": None}]), "")
+
+    def test_finding_for_code_without_message_or_filename(self) -> None:
+        finding = _finding_for_code(
+            "E701",
+            [{"code": "E701", "message": "", "filename": ""}],
+            Path("."),
+        )
+        self.assertEqual(finding.evidence_paths, [])
+        self.assertEqual(finding.recommendation, "Resolve the Ruff E701 findings.")
+
+    def test_non_dict_diagnostics_are_skipped(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            diagnostics = [
+                "not-a-dict",
+                {
+                    "code": "F401",
+                    "message": "unused import",
+                    "filename": str(root / "a.py"),
+                    "location": {"row": 1, "column": 1},
+                },
+            ]
+            with (
+                patch("repo_review_agent.linters.shutil.which", return_value="/usr/bin/ruff"),
+                patch("repo_review_agent.linters.subprocess.run", _fake_ruff(diagnostics)),
+            ):
+                findings = ruff_findings(root)
+        self.assertEqual(len(findings), 1)
 
 
 if __name__ == "__main__":
