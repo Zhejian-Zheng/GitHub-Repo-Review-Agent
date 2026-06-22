@@ -14,5 +14,5 @@ frontend/dist/
 .env.*
 !.env.example
 !frontend/.env.production.example
-review-report.md
-review-report.json
+review-report*.md
+review-report*.json
