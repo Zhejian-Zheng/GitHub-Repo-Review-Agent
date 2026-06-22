@@ -28,6 +28,17 @@ IGNORED_DIRS = {
     ".terraform",
 }
 
+# Test fixture / sample-data directories. Their contents are deliberate examples
+# (often intentionally broken), not the project's own code, so they are excluded
+# from the scan to avoid false-positive hygiene and security findings.
+FIXTURE_DIRS = {
+    "fixtures",
+    "__fixtures__",
+    "testdata",
+}
+
+EXCLUDED_DIRS = IGNORED_DIRS | FIXTURE_DIRS
+
 DEPENDENCY_FILES = {
     "package.json",
     "pnpm-lock.yaml",
@@ -151,7 +162,7 @@ def scan_repository(
     top_level_items = sorted(
         item.name
         for item in root.iterdir()
-        if item.name not in IGNORED_DIRS and item.name != ".git"
+        if item.name not in EXCLUDED_DIRS and item.name != ".git"
     )
 
     return RepositorySnapshot(
@@ -174,9 +185,9 @@ def scan_repository(
 def _iter_files(root: Path):
     paths: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        # Prune ignored directories in place so we never descend into large
-        # vendored trees such as node_modules or .venv.
-        dirnames[:] = [name for name in dirnames if name not in IGNORED_DIRS]
+        # Prune ignored and fixture directories in place so we never descend into
+        # large vendored trees (node_modules, .venv) or test sample data.
+        dirnames[:] = [name for name in dirnames if name not in EXCLUDED_DIRS]
         for filename in filenames:
             path = Path(dirpath) / filename
             if path.is_file():
