@@ -22,6 +22,9 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]
+dependencies = [
+  "python-dotenv>=1.0",
+]
 
 [project.scripts]
 repo-review = "repo_review_agent.cli:main"

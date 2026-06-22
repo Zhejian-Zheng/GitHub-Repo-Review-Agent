@@ -13,8 +13,11 @@ from .prompting import build_few_shot_examples, build_prompt_tuning_guidance
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
+ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 DEFAULT_OPENROUTER_MODEL = "openrouter/auto"
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 DEFAULT_OLLAMA_MODEL = "llama3.2"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 AI_REVIEW_SECTION_KEYS = (
@@ -58,6 +61,13 @@ def add_ai_review(
         )
     elif provider == "openrouter":
         raw_review = generate_with_openrouter(
+            prompt,
+            model=resolved_model,
+            timeout=timeout,
+            max_output_tokens=max_output_tokens,
+        )
+    elif provider == "anthropic":
+        raw_review = generate_with_anthropic(
             prompt,
             model=resolved_model,
             timeout=timeout,
@@ -115,6 +125,8 @@ def resolve_model(provider: str, model: str | None) -> str:
         return os.environ.get("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
     if provider == "openrouter":
         return os.environ.get("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
+    if provider == "anthropic":
+        return os.environ.get("ANTHROPIC_MODEL") or DEFAULT_ANTHROPIC_MODEL
     if provider == "ollama":
         return os.environ.get("OLLAMA_MODEL") or DEFAULT_OLLAMA_MODEL
     return model or "unknown"
@@ -540,6 +552,41 @@ def generate_with_openrouter(
     return text
 
 
+def generate_with_anthropic(
+    prompt: str,
+    *,
+    model: str,
+    timeout: float,
+    max_output_tokens: int,
+) -> str:
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise AIProviderError("ANTHROPIC_API_KEY is not set.")
+
+    payload = {
+        "model": model,
+        "max_tokens": max_output_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    data = _post_json(
+        ANTHROPIC_MESSAGES_URL,
+        payload,
+        timeout=timeout,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": ANTHROPIC_VERSION,
+        },
+    )
+    if data.get("type") == "error":
+        error = data.get("error")
+        raise AIProviderError(f"Anthropic error: {error}")
+
+    text = extract_anthropic_text(data)
+    if not text:
+        raise AIProviderError("Anthropic response did not contain text output.")
+    return text
+
+
 def generate_with_ollama(
     prompt: str,
     *,
@@ -581,6 +628,16 @@ def extract_openrouter_text(data: dict) -> str:
             for item in content:
                 if isinstance(item, dict) and isinstance(item.get("text"), str):
                     parts.append(item["text"])
+    return "\n".join(parts).strip()
+
+
+def extract_anthropic_text(data: dict) -> str:
+    parts: list[str] = []
+    for block in data.get("content", []):
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text" and isinstance(block.get("text"), str):
+            parts.append(block["text"])
     return "\n".join(parts).strip()
 
 

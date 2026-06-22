@@ -9,10 +9,12 @@ from repo_review_agent.llm import (
     attach_ai_error,
     build_review_prompt,
     coerce_plain_text_review,
+    extract_anthropic_text,
     extract_json_object,
     extract_markdown_review_sections,
     extract_openai_text,
     extract_openrouter_text,
+    generate_with_anthropic,
     generate_with_ollama,
     generate_with_openai,
     generate_with_openrouter,
@@ -164,6 +166,23 @@ class LLMTests(unittest.TestCase):
 
     def test_resolve_model_supports_openrouter_default(self) -> None:
         self.assertEqual(resolve_model("openrouter", None), "openrouter/auto")
+
+    def test_resolve_model_supports_anthropic_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(resolve_model("anthropic", None), "claude-opus-4-8")
+
+    def test_extract_anthropic_text_joins_text_blocks(self) -> None:
+        text = extract_anthropic_text(
+            {
+                "content": [
+                    {"type": "text", "text": "hello"},
+                    {"type": "thinking", "thinking": "ignored"},
+                    "not-a-dict",
+                    {"type": "text", "text": "world"},
+                ]
+            }
+        )
+        self.assertEqual(text, "hello\nworld")
 
     @patch.dict("os.environ", {"OPENAI_MODEL": "env-openai", "OLLAMA_MODEL": "env-ollama"})
     def test_resolve_model_uses_environment_and_unknown_fallback(self) -> None:
@@ -352,6 +371,57 @@ Scanner, analyzer, API, and web UI are separated clearly.
             report.ai_review.sections["next_steps"],
             ["Add golden report fixtures so output quality can be regression tested."],
         )
+
+    @patch("repo_review_agent.llm.generate_with_anthropic")
+    def test_add_ai_review_supports_anthropic(self, mock_generate) -> None:
+        mock_generate.return_value = sample_ai_review_json()
+
+        report = add_ai_review(
+            sample_report(),
+            provider="anthropic",
+            timeout=1,
+        )
+
+        self.assertIsNotNone(report.ai_review)
+        self.assertEqual(report.ai_review.provider, "anthropic")
+        self.assertEqual(report.ai_review.model, "claude-opus-4-8")
+        self.assertEqual(report.ai_review.status, "generated")
+
+    def test_generate_with_anthropic_requires_key_and_text(self) -> None:
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(AIProviderError):
+            generate_with_anthropic("prompt", model="claude-opus-4-8", timeout=1, max_output_tokens=10)
+
+        with (
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "key"}, clear=True),
+            patch(
+                "repo_review_agent.llm._post_json",
+                return_value={"type": "error", "error": {"message": "bad"}},
+            ),
+            self.assertRaises(AIProviderError),
+        ):
+            generate_with_anthropic("prompt", model="claude-opus-4-8", timeout=1, max_output_tokens=10)
+
+        with (
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "key"}, clear=True),
+            patch("repo_review_agent.llm._post_json", return_value={"content": []}),
+            self.assertRaises(AIProviderError),
+        ):
+            generate_with_anthropic("prompt", model="claude-opus-4-8", timeout=1, max_output_tokens=10)
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "key"}, clear=True)
+    @patch("repo_review_agent.llm._post_json")
+    def test_generate_with_anthropic_returns_text(self, mock_post_json) -> None:
+        mock_post_json.return_value = {"content": [{"type": "text", "text": "claude review"}]}
+
+        text = generate_with_anthropic(
+            "prompt", model="claude-opus-4-8", timeout=1, max_output_tokens=10
+        )
+
+        self.assertEqual(text, "claude review")
+        self.assertEqual(mock_post_json.call_args.args[0], "https://api.anthropic.com/v1/messages")
+        headers = mock_post_json.call_args.kwargs["headers"]
+        self.assertEqual(headers["x-api-key"], "key")
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
 
     def test_add_ai_review_rejects_unknown_provider(self) -> None:
         with self.assertRaises(AIProviderError):

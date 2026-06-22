@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from .agent import RepoReviewAgent
 from .analyzer import analyze_repository
 from .chatgpt_agent import ChatGPTReviewAgent
+from .env import load_local_env
 from .function_agent import OpenAIFunctionCallingAgent
 from .github import (
     GitHubIntegrationError,
@@ -25,6 +26,7 @@ from .report import render_markdown, write_json, write_markdown
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_local_env()
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -187,7 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--ai-provider",
-        choices=["none", "openai", "openrouter", "ollama"],
+        choices=["none", "openai", "openrouter", "anthropic", "ollama"],
         default="none",
         help="Optional LLM provider used to generate an AI review section",
     )

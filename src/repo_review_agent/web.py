@@ -15,6 +15,7 @@ from .agent import RepoReviewAgent
 from .analyzer import analyze_repository
 from .auth import AuthError, AuthUser, bearer_token_from_headers, get_supabase_user
 from .cli import resolve_target
+from .env import load_local_env
 from .function_agent import OpenAIFunctionCallingAgent
 from .history import (
     HistoryNotFoundError,
@@ -45,6 +46,9 @@ except ImportError as exc:  # pragma: no cover - optional dependency guard.
     raise RuntimeError(
         "Web dependencies are not installed. Run `python -m pip install -e .[web]`."
     ) from exc
+
+# Load .env before reading the module-level configuration constants below.
+load_local_env()
 
 
 FRONTEND_DIST = Path(
@@ -90,7 +94,7 @@ repo-review-web</pre>
 class ReviewRequest(BaseModel):
     target: str = Field(..., description="Local repository path or GitHub URL.")
     mode: Literal["direct", "agent", "function-calling"] = "agent"
-    ai_provider: Literal["none", "openai", "openrouter", "ollama"] = "none"
+    ai_provider: Literal["none", "openai", "openrouter", "anthropic", "ollama"] = "none"
     ai_model: str | None = None
     report_language: Literal["en", "zh-CN"] = "en"
     max_files: int = Field(500, ge=1, le=WEB_MAX_FILES_LIMIT)

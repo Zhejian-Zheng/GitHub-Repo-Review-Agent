@@ -339,6 +339,16 @@ export OPENROUTER_API_KEY="your_openrouter_key"
 repo-review . --ai-provider openrouter --ai-model openrouter/auto --output review-report.md
 ```
 
+Enable Anthropic (Claude):
+
+```bash
+export ANTHROPIC_API_KEY="your_anthropic_key"
+repo-review . --ai-provider anthropic --output review-report.md
+```
+
+Anthropic defaults to the `claude-opus-4-8` model; override it with `--ai-model`
+or the `ANTHROPIC_MODEL` environment variable.
+
 Enable the local Ollama AI layer:
 
 ```bash
