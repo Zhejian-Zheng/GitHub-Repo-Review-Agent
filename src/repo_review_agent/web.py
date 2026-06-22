@@ -5,7 +5,7 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -256,10 +256,8 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         fail_stale = getattr(review_jobs, "fail_stale_running_jobs", None)
         if fail_stale:
-            try:
+            with suppress(HistoryStoreError):
                 fail_stale()
-            except HistoryStoreError:
-                pass
         yield
 
     app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0", lifespan=lifespan)
