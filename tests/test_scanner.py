@@ -121,6 +121,22 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("app.py", paths)
         self.assertNotIn("broken.py", paths)
 
+    def test_scan_repository_excludes_test_fixture_directories(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (root / "tests" / "fixtures" / "risky-js-app").mkdir(parents=True)
+            (root / "tests" / "fixtures" / "risky-js-app" / "package.json").write_text(
+                '{"dependencies": {"react": "latest"}}\n', encoding="utf-8"
+            )
+
+            snapshot = scan_repository(root)
+
+        paths = {file.path for file in snapshot.files}
+        self.assertIn("app.py", paths)
+        self.assertNotIn("tests/fixtures/risky-js-app/package.json", paths)
+        self.assertEqual(snapshot.dependency_files, [])
+
     def test_relative_path_falls_back_for_unrelated_paths(self) -> None:
         self.assertEqual(_relative_path(Path("/a/b"), Path("/c/d")), "/c/d")
 
