@@ -19,6 +19,10 @@ class WebAPITests(unittest.TestCase):
         )
         self._env_patcher.start()
 
+        from repo_review_agent.web import WEB_AUTH_CACHE
+
+        WEB_AUTH_CACHE.clear()
+
     def tearDown(self) -> None:
         self._env_patcher.stop()
 
@@ -175,6 +179,49 @@ class WebAPITests(unittest.TestCase):
             authenticated_user_from_request(_fake_request(headers={}), required=True)
 
         self.assertEqual(context.exception.status_code, 401)
+
+    @patch("repo_review_agent.web.get_supabase_user")
+    def test_authenticated_user_is_cached_within_ttl(self, mock_get_user) -> None:
+        from repo_review_agent.auth import AuthUser
+        from repo_review_agent.web import WEB_AUTH_CACHE, authenticated_user_from_request
+
+        mock_get_user.return_value = AuthUser(id="user-id", email="user@example.com")
+        request = _fake_request(headers={"authorization": "Bearer cached-token"})
+
+        with patch.object(WEB_AUTH_CACHE, "ttl_seconds", 60):
+            first = authenticated_user_from_request(request)
+            second = authenticated_user_from_request(request)
+
+        self.assertEqual(first.id, "user-id")
+        self.assertEqual(second.id, "user-id")
+        mock_get_user.assert_called_once_with("cached-token")
+
+    @patch("repo_review_agent.web.get_supabase_user")
+    def test_authenticated_user_not_cached_when_ttl_disabled(self, mock_get_user) -> None:
+        from repo_review_agent.auth import AuthUser
+        from repo_review_agent.web import WEB_AUTH_CACHE, authenticated_user_from_request
+
+        mock_get_user.return_value = AuthUser(id="user-id")
+        request = _fake_request(headers={"authorization": "Bearer no-cache-token"})
+
+        with patch.object(WEB_AUTH_CACHE, "ttl_seconds", 0):
+            authenticated_user_from_request(request)
+            authenticated_user_from_request(request)
+
+        self.assertEqual(mock_get_user.call_count, 2)
+
+    def test_auth_token_cache_expires_entries(self) -> None:
+        from repo_review_agent.auth import AuthUser
+        from repo_review_agent.web import AuthTokenCache
+
+        cache = AuthTokenCache(ttl_seconds=30)
+        user = AuthUser(id="user-id")
+        cache.set("tok", user, now=100)
+
+        self.assertIsNotNone(cache.get("tok", now=120))
+        self.assertIsNone(cache.get("tok", now=131))
+        # Expired entry is evicted on access.
+        self.assertIsNone(cache.get("tok", now=121))
 
     @patch("repo_review_agent.web.get_supabase_user")
     def test_auth_me_endpoint_returns_current_user(self, mock_get_user) -> None:

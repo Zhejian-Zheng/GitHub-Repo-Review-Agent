@@ -89,6 +89,19 @@ class LLMTests(unittest.TestCase):
         self.assertIn("Few-shot examples", prompt)
         self.assertIn("risky-js-app", prompt)
 
+    def test_build_review_prompt_wraps_untrusted_repository_data(self) -> None:
+        prompt = build_review_prompt(sample_report())
+
+        self.assertIn("untrusted data", prompt)
+        self.assertIn("BEGIN UNTRUSTED REPOSITORY DATA", prompt)
+        self.assertIn("END UNTRUSTED REPOSITORY DATA", prompt)
+        self.assertIn("prompt-injection risk", prompt)
+        # The data boundary must enclose the JSON payload.
+        begin = prompt.index("BEGIN UNTRUSTED REPOSITORY DATA")
+        end = prompt.index("END UNTRUSTED REPOSITORY DATA")
+        self.assertLess(begin, prompt.index('"repo_name"'))
+        self.assertLess(prompt.index('"repo_name"'), end)
+
     def test_build_review_prompt_supports_chinese(self) -> None:
         prompt = build_review_prompt(sample_report(), language="zh-CN")
 

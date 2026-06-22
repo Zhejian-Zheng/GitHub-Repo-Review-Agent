@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import os
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
@@ -69,6 +70,7 @@ WEB_RATE_LIMITER = InMemoryRateLimiter(
     limit_per_minute=int_from_env("REPO_REVIEW_RATE_LIMIT_PER_MINUTE", 30, minimum=0)
 )
 WEB_JOB_WORKERS = int_from_env("REPO_REVIEW_JOB_WORKERS", 2, minimum=1)
+WEB_AUTH_CACHE_TTL = int_from_env("REPO_REVIEW_AUTH_CACHE_TTL", 60, minimum=0)
 
 FALLBACK_HTML = """<!doctype html>
 <html lang="en">
@@ -131,17 +133,51 @@ class ReviewJob:
         return payload
 
 
-class InMemoryReviewJobStore:
+class BaseReviewJobStore:
+    """Shared executor wiring and run loop for the review job stores.
+
+    Subclasses own persistence (in-memory dict vs Supabase) by implementing the
+    three status hooks; the dispatch and error-handling loop lives here so it is
+    written once.
+    """
+
     def __init__(self, *, max_workers: int = WEB_JOB_WORKERS) -> None:
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="repo-review")
+
+    def _dispatch(self, job_id: str, request: ReviewRequest, user: AuthUser | None) -> None:
+        self._executor.submit(self._run, job_id, copy.deepcopy(request), copy.deepcopy(user))
+
+    def _run(self, job_id: str, request: ReviewRequest, user: AuthUser | None) -> None:
+        try:
+            self._set_running(job_id)
+            result = execute_review_request(request, user)
+        except (AIProviderError, RuntimeError, SystemExit, HistoryStoreError, PermissionError) as exc:
+            self._set_failed(job_id, str(exc))
+        except Exception as exc:  # pragma: no cover - defensive job boundary.
+            self._set_failed(job_id, f"Unexpected review job failure: {exc}")
+        else:
+            self._set_completed(job_id, result)
+
+    def _set_running(self, job_id: str) -> None:
+        raise NotImplementedError
+
+    def _set_completed(self, job_id: str, result: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def _set_failed(self, job_id: str, error: str) -> None:
+        raise NotImplementedError
+
+
+class InMemoryReviewJobStore(BaseReviewJobStore):
+    def __init__(self, *, max_workers: int = WEB_JOB_WORKERS) -> None:
+        super().__init__(max_workers=max_workers)
         self._jobs: dict[str, ReviewJob] = {}
         self._lock = threading.Lock()
 
     def submit(self, *, request: ReviewRequest, user: AuthUser | None) -> ReviewJob:
-        job_id = uuid.uuid4().hex
         now = _utc_now()
         job = ReviewJob(
-            id=job_id,
+            id=uuid.uuid4().hex,
             status="queued",
             owner_id=user.id if user else None,
             owner_email=user.email if user else None,
@@ -150,27 +186,23 @@ class InMemoryReviewJobStore:
             target=request.target,
         )
         with self._lock:
-            self._jobs[job_id] = job
+            self._jobs[job.id] = job
 
-        request_copy = copy.deepcopy(request)
-        user_copy = copy.deepcopy(user)
-        self._executor.submit(self._run, job_id, request_copy, user_copy)
+        self._dispatch(job.id, request, user)
         return job
 
     def get(self, job_id: str) -> ReviewJob | None:
         with self._lock:
             return copy.deepcopy(self._jobs.get(job_id))
 
-    def _run(self, job_id: str, request: ReviewRequest, user: AuthUser | None) -> None:
+    def _set_running(self, job_id: str) -> None:
         self._update(job_id, status="running")
-        try:
-            result = execute_review_request(request, user)
-        except (AIProviderError, RuntimeError, SystemExit, HistoryStoreError, PermissionError) as exc:
-            self._update(job_id, status="failed", error=str(exc))
-        except Exception as exc:  # pragma: no cover - defensive job boundary.
-            self._update(job_id, status="failed", error=f"Unexpected review job failure: {exc}")
-        else:
-            self._update(job_id, status="completed", result=result)
+
+    def _set_completed(self, job_id: str, result: dict[str, Any]) -> None:
+        self._update(job_id, status="completed", result=result)
+
+    def _set_failed(self, job_id: str, error: str) -> None:
+        self._update(job_id, status="failed", error=error)
 
     def _update(
         self,
@@ -190,15 +222,15 @@ class InMemoryReviewJobStore:
             job.error = error
 
 
-class SupabaseBackedReviewJobStore:
+class SupabaseBackedReviewJobStore(BaseReviewJobStore):
     def __init__(
         self,
         *,
         storage: SupabaseReviewJobStore | None = None,
         max_workers: int = WEB_JOB_WORKERS,
     ) -> None:
+        super().__init__(max_workers=max_workers)
         self._storage = storage or SupabaseReviewJobStore.from_env()
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="repo-review")
 
     def submit(self, *, request: ReviewRequest, user: AuthUser | None) -> ReviewJob:
         row = self._storage.create_job(
@@ -207,10 +239,7 @@ class SupabaseBackedReviewJobStore:
             owner_id=user.id if user else None,
         )
         job = _job_from_supabase_row(row)
-
-        request_copy = copy.deepcopy(request)
-        user_copy = copy.deepcopy(user)
-        self._executor.submit(self._run, job.id, request_copy, user_copy)
+        self._dispatch(job.id, request, user)
         return job
 
     def get(self, job_id: str) -> ReviewJob | None:
@@ -222,18 +251,13 @@ class SupabaseBackedReviewJobStore:
     def fail_stale_running_jobs(self) -> int:
         return self._storage.fail_stale_running_jobs()
 
-    def _run(self, job_id: str, request: ReviewRequest, user: AuthUser | None) -> None:
-        try:
-            self._storage.update_job(job_id, status="running")
-            result = execute_review_request(request, user)
-        except (AIProviderError, RuntimeError, SystemExit, HistoryStoreError, PermissionError) as exc:
-            self._mark_failed(job_id, str(exc))
-        except Exception as exc:  # pragma: no cover - defensive job boundary.
-            self._mark_failed(job_id, f"Unexpected review job failure: {exc}")
-        else:
-            self._storage.update_job(job_id, status="completed", result=result)
+    def _set_running(self, job_id: str) -> None:
+        self._storage.update_job(job_id, status="running")
 
-    def _mark_failed(self, job_id: str, error: str) -> None:
+    def _set_completed(self, job_id: str, result: dict[str, Any]) -> None:
+        self._storage.update_job(job_id, status="completed", result=result)
+
+    def _set_failed(self, job_id: str, error: str) -> None:
         try:
             self._storage.update_job(job_id, status="failed", error=error)
         except HistoryStoreError:
@@ -373,6 +397,49 @@ def execute_review_request(request: ReviewRequest, user: AuthUser | None) -> dic
     return response
 
 
+class AuthTokenCache:
+    """Short-lived cache of verified Supabase tokens.
+
+    Token verification is a network round-trip to Supabase on every request.
+    Caching the resolved user for a short TTL removes that latency for bursts of
+    requests from the same signed-in client. The trade-off is that a revoked
+    token stays accepted until its cache entry expires, so keep the TTL small.
+    """
+
+    def __init__(self, *, ttl_seconds: int) -> None:
+        self.ttl_seconds = ttl_seconds
+        self._entries: dict[str, tuple[float, AuthUser]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, token: str, *, now: float | None = None) -> AuthUser | None:
+        if self.ttl_seconds <= 0:
+            return None
+        current_time = time.time() if now is None else now
+        with self._lock:
+            entry = self._entries.get(token)
+            if entry is None:
+                return None
+            expires_at, user = entry
+            if expires_at <= current_time:
+                del self._entries[token]
+                return None
+            return user
+
+    def set(self, token: str, user: AuthUser, *, now: float | None = None) -> None:
+        if self.ttl_seconds <= 0:
+            return
+        current_time = time.time() if now is None else now
+        with self._lock:
+            self._entries[token] = (current_time + self.ttl_seconds, user)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+WEB_AUTH_CACHE = AuthTokenCache(ttl_seconds=WEB_AUTH_CACHE_TTL)
+
+
 def authenticated_user_from_request(http_request: Request, *, required: bool | None = None) -> AuthUser | None:
     if required is None:
         required = bool_from_env("REPO_REVIEW_REQUIRE_AUTH", False)
@@ -383,10 +450,17 @@ def authenticated_user_from_request(http_request: Request, *, required: bool | N
             raise HTTPException(status_code=401, detail="Sign in is required.")
         return None
 
+    cached_user = WEB_AUTH_CACHE.get(token)
+    if cached_user is not None:
+        return cached_user
+
     try:
-        return get_supabase_user(token)
+        user = get_supabase_user(token)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    WEB_AUTH_CACHE.set(token, user)
+    return user
 
 
 def enforce_public_api_controls(http_request: Request, target: str) -> None:
