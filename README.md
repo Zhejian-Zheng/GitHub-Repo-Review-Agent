@@ -131,6 +131,18 @@ Run without installing the package:
 PYTHONPATH=src python -m repo_review_agent.cli . --output review-report.md
 ```
 
+Enrich the direct analysis with external linters (currently Ruff for Python).
+When `ruff` is available on `PATH`, its diagnostics are normalized into the same
+findings as the built-in checks. The flag is opt-in, so the core report stays
+deterministic when it is omitted:
+
+```bash
+repo-review . --lint --output review-report.md
+```
+
+The web API exposes the same enrichment through a `"lint": true` field on the
+review request payload.
+
 Run the custom agent loop:
 
 ```bash

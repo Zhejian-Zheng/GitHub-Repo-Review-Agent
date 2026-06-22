@@ -105,6 +105,14 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(read_text_file(root, "README.md", limit=3), "abc")
             self.assertEqual(read_text_file(root, "missing.md"), "")
 
+    def test_read_text_file_rejects_path_traversal(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (Path(tmp) / "secret.txt").write_text("top secret", encoding="utf-8")
+
+            self.assertEqual(read_text_file(root, "../secret.txt"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

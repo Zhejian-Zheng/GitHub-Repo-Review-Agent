@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo_path,
                 max_files=args.max_files,
                 max_file_size=args.max_file_size,
+                run_linters=args.lint,
             )
             if args.ai_provider != "none":
                 try:
@@ -246,6 +247,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["dry-run", "create", "upsert"],
         default="dry-run",
         help="Whether PR comment mode should preview, create, or update the sticky comment.",
+    )
+    parser.add_argument(
+        "--lint",
+        action="store_true",
+        help="Enrich the direct analysis with external linters (Ruff) when available on PATH.",
     )
     parser.add_argument("--max-files", type=int, default=500, help="Maximum number of files to scan")
     parser.add_argument(

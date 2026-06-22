@@ -82,10 +82,16 @@ def request_token_matches(headers, expected_token: str | None) -> bool:
     return False
 
 
-def client_identifier(headers, fallback_host: str | None) -> str:
-    forwarded_for = headers.get("x-forwarded-for", "")
-    if forwarded_for:
-        return forwarded_for.split(",", maxsplit=1)[0].strip()
+def client_identifier(
+    headers,
+    fallback_host: str | None,
+    *,
+    trust_forwarded: bool = True,
+) -> str:
+    if trust_forwarded:
+        forwarded_for = headers.get("x-forwarded-for", "")
+        if forwarded_for:
+            return forwarded_for.split(",", maxsplit=1)[0].strip()
     return fallback_host or "unknown"
 
 
@@ -95,6 +101,7 @@ class InMemoryRateLimiter:
         self.window_seconds = window_seconds
         self._hits: dict[str, deque[float]] = defaultdict(deque)
         self._lock = Lock()
+        self._last_sweep = 0.0
 
     def allow(self, key: str, *, now: float | None = None) -> bool:
         if self.limit_per_minute <= 0:
@@ -104,6 +111,8 @@ class InMemoryRateLimiter:
         earliest_allowed = current_time - self.window_seconds
 
         with self._lock:
+            self._evict_stale(earliest_allowed, current_time)
+
             hits = self._hits[key]
             while hits and hits[0] <= earliest_allowed:
                 hits.popleft()
@@ -113,3 +122,19 @@ class InMemoryRateLimiter:
 
             hits.append(current_time)
             return True
+
+    def _evict_stale(self, earliest_allowed: float, current_time: float) -> None:
+        # Drop keys whose window has fully expired so idle clients do not leak
+        # memory. Sweeping at most once per window keeps this O(n) cost amortized.
+        if current_time - self._last_sweep < self.window_seconds:
+            return
+        self._last_sweep = current_time
+
+        stale_keys: list[str] = []
+        for key, hits in self._hits.items():
+            while hits and hits[0] <= earliest_allowed:
+                hits.popleft()
+            if not hits:
+                stale_keys.append(key)
+        for key in stale_keys:
+            del self._hits[key]

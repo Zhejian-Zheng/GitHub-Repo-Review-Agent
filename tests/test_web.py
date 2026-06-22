@@ -388,8 +388,7 @@ class WebAPITests(unittest.TestCase):
         store = StaleStore()
         with patch("repo_review_agent.web.build_review_job_store", return_value=store):
             app = create_app()
-            for startup_hook in app.router.on_startup:
-                startup_hook()
+            _run_lifespan(app)
 
         self.assertTrue(store.called)
 
@@ -398,8 +397,7 @@ class WebAPITests(unittest.TestCase):
 
         with patch("repo_review_agent.web.build_review_job_store", return_value=object()):
             app = create_app()
-            for startup_hook in app.router.on_startup:
-                startup_hook()
+            _run_lifespan(app)
 
     def test_review_endpoint_returns_markdown_and_handles_errors(self) -> None:
         from fastapi import HTTPException
@@ -884,6 +882,16 @@ def _route_endpoint(app, path: str):
         if getattr(route, "path", None) == path:
             return route.endpoint
     raise AssertionError(f"Route not found: {path}")
+
+
+def _run_lifespan(app) -> None:
+    import asyncio
+
+    async def _drive() -> None:
+        async with app.router.lifespan_context(app):
+            pass
+
+    asyncio.run(_drive())
 
 
 def _wait_for_completed_job(get_endpoint, job_id: str):

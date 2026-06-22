@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -109,14 +110,20 @@ def scan_repository(
     skipped_file_paths: list[str] = []
 
     for path in _iter_files(root):
+        rel_path = _relative_path(root, path)
+
+        if len(files) >= max_files:
+            skipped_files += 1
+            skipped_file_paths.append(rel_path)
+            break
+
         try:
             stat = path.stat()
         except OSError:
             skipped_files += 1
-            skipped_file_paths.append(_relative_path(root, path))
+            skipped_file_paths.append(rel_path)
             continue
 
-        rel_path = _relative_path(root, path)
         if stat.st_size > max_file_size:
             skipped_files += 1
             skipped_file_paths.append(rel_path)
@@ -134,11 +141,6 @@ def scan_repository(
                 language=language,
             )
         )
-
-        if len(files) >= max_files:
-            skipped_files += 1
-            skipped_file_paths.append(rel_path)
-            break
 
     language_counts = Counter(
         file.language
@@ -170,15 +172,18 @@ def scan_repository(
 
 
 def _iter_files(root: Path):
-    for path in sorted(
-        root.rglob("*"),
-        key=lambda candidate: _relative_path(root, candidate).lower(),
-    ):
-        if not path.is_file():
-            continue
-        if any(part in IGNORED_DIRS for part in path.relative_to(root).parts):
-            continue
-        yield path
+    paths: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune ignored directories in place so we never descend into large
+        # vendored trees such as node_modules or .venv.
+        dirnames[:] = [name for name in dirnames if name not in IGNORED_DIRS]
+        for filename in filenames:
+            path = Path(dirpath) / filename
+            if path.is_file():
+                paths.append(path)
+
+    paths.sort(key=lambda candidate: _relative_path(root, candidate).lower())
+    yield from paths
 
 
 def _relative_path(root: Path, path: Path) -> str:
@@ -225,7 +230,10 @@ def _classify_file(rel_path: str, name: str, language: str | None) -> str:
 
 
 def read_text_file(root: Path, rel_path: str, *, limit: int = 60_000) -> str:
+    root = root.resolve()
     path = (root / rel_path).resolve()
+    if path != root and not path.is_relative_to(root):
+        return ""
     try:
         return path.read_text(encoding="utf-8", errors="replace")[:limit]
     except OSError:

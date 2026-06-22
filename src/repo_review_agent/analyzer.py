@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .linters import collect_linter_findings
 from .models import Finding, RepositorySnapshot, ReviewReport
 from .scanner import read_text_file, scan_repository
 
@@ -108,14 +109,20 @@ def analyze_repository(
     *,
     max_files: int = 500,
     max_file_size: int = 512_000,
+    run_linters: bool = False,
 ) -> ReviewReport:
     snapshot = scan_repository(root, max_files=max_files, max_file_size=max_file_size)
-    return analyze_snapshot(snapshot, root)
+    return analyze_snapshot(snapshot, root, run_linters=run_linters)
 
 
-def analyze_snapshot(snapshot: RepositorySnapshot, root: Path) -> ReviewReport:
+def analyze_snapshot(
+    snapshot: RepositorySnapshot,
+    root: Path,
+    *,
+    run_linters: bool = False,
+) -> ReviewReport:
     framework_signals = detect_framework_signals(snapshot, root)
-    findings = build_findings(snapshot, root)
+    findings = build_findings(snapshot, root, run_linters=run_linters)
 
     return ReviewReport(
         repo_name=snapshot.name,
@@ -222,7 +229,12 @@ def detect_framework_signals(
     return signals
 
 
-def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
+def build_findings(
+    snapshot: RepositorySnapshot,
+    root: Path,
+    *,
+    run_linters: bool = False,
+) -> list[Finding]:
     findings: list[Finding] = []
     file_paths = {file.path.lower() for file in snapshot.files}
     dependency_paths = {path.lower() for path in snapshot.dependency_files}
@@ -350,6 +362,9 @@ def build_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
                 evidence_paths=snapshot.skipped_file_paths[:5],
             )
         )
+
+    if run_linters:
+        findings.extend(collect_linter_findings(snapshot, root))
 
     secret_evidence = find_secret_like_values(snapshot, root)
     if secret_evidence:

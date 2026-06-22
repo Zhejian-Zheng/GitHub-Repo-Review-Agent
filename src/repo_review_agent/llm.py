@@ -42,7 +42,7 @@ def add_ai_review(
     model: str | None = None,
     language: str | None = None,
     timeout: float = 60,
-    max_output_tokens: int = 1_800,
+    max_output_tokens: int = 900,
     ollama_url: str | None = None,
 ) -> ReviewReport:
     provider = provider.lower()

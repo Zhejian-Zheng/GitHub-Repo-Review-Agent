@@ -65,6 +65,24 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(client_identifier({}, "127.0.0.1"), "127.0.0.1")
         self.assertEqual(client_identifier({}, None), "unknown")
 
+    def test_client_identifier_ignores_forwarded_for_when_untrusted(self) -> None:
+        self.assertEqual(
+            client_identifier(
+                {"x-forwarded-for": "203.0.113.1"},
+                "127.0.0.1",
+                trust_forwarded=False,
+            ),
+            "127.0.0.1",
+        )
+
+    def test_rate_limiter_evicts_idle_keys(self) -> None:
+        limiter = InMemoryRateLimiter(limit_per_minute=2, window_seconds=60)
+
+        self.assertTrue(limiter.allow("idle", now=100))
+        # A sweep one window later should drop the idle key entirely.
+        self.assertTrue(limiter.allow("other", now=200))
+        self.assertNotIn("idle", limiter._hits)
+
     def test_validate_target_policy_allows_local_targets_when_configured(self) -> None:
         validate_target_policy(".", allow_local_targets=True)
 

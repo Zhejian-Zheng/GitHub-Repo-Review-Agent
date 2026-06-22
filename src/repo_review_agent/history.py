@@ -368,7 +368,7 @@ class SupabaseHistoryStore:
             "GET",
             (
                 "review_runs"
-                f"?repository_id=eq.{repository_id}"
+                f"?repository_id=eq.{_url_value(repository_id)}"
                 "&status=eq.completed"
                 "&select=id"
                 "&order=created_at.desc"
@@ -383,7 +383,7 @@ class SupabaseHistoryStore:
             "GET",
             (
                 "findings"
-                f"?review_run_id=eq.{review_run_id}"
+                f"?review_run_id=eq.{_url_value(review_run_id)}"
                 "&select=fingerprint,title,severity,category,evidence_json,evidence_paths_json,recommendation"
             ),
         )

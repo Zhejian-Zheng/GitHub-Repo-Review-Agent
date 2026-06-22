@@ -5,6 +5,7 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,6 +95,7 @@ class ReviewRequest(BaseModel):
     report_language: Literal["en", "zh-CN"] = "en"
     max_files: int = Field(500, ge=1, le=WEB_MAX_FILES_LIMIT)
     max_file_size: int = Field(512_000, ge=1_024, le=WEB_MAX_FILE_SIZE_LIMIT)
+    lint: bool = False
     save_history: bool = False
     history_repo_url: str | None = None
 
@@ -248,19 +250,20 @@ def build_review_job_store() -> InMemoryReviewJobStore | SupabaseBackedReviewJob
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0")
-    configure_cors(app)
     review_jobs = build_review_job_store()
 
-    @app.on_event("startup")
-    def fail_stale_review_jobs() -> None:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
         fail_stale = getattr(review_jobs, "fail_stale_running_jobs", None)
-        if not fail_stale:
-            return
-        try:
-            fail_stale()
-        except HistoryStoreError:
-            return
+        if fail_stale:
+            try:
+                fail_stale()
+            except HistoryStoreError:
+                pass
+        yield
+
+    app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0", lifespan=lifespan)
+    configure_cors(app)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -392,6 +395,7 @@ def enforce_public_api_controls(http_request: Request, target: str) -> None:
     client_id = client_identifier(
         http_request.headers,
         http_request.client.host if http_request.client else None,
+        trust_forwarded=bool_from_env("REPO_REVIEW_TRUST_FORWARDED_FOR", True),
     )
     if not WEB_RATE_LIMITER.allow(client_id):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
@@ -424,6 +428,7 @@ def run_review_for_path(request: ReviewRequest, repo_path: Path):
         repo_path,
         max_files=request.max_files,
         max_file_size=request.max_file_size,
+        run_linters=request.lint,
     )
     if request.ai_provider != "none":
         try:

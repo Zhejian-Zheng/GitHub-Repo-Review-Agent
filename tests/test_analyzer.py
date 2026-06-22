@@ -1,12 +1,38 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from repo_review_agent.analyzer import analyze_repository, build_overview, detect_framework_signals
+from repo_review_agent.models import Finding
 from repo_review_agent.scanner import scan_repository
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_run_linters_flag_appends_linter_findings(self) -> None:
+        lint_finding = Finding(
+            title="Fix 1 Ruff F401 lint finding(s)",
+            severity="medium",
+            category="correctness",
+            evidence=["app.py:1 `os` imported but unused"],
+            recommendation="Resolve the Ruff F401 findings.",
+            evidence_paths=["app.py"],
+        )
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("import os\n", encoding="utf-8")
+
+            with patch(
+                "repo_review_agent.analyzer.collect_linter_findings",
+                return_value=[lint_finding],
+            ) as collect_mock:
+                enabled = analyze_repository(root, run_linters=True)
+            disabled = analyze_repository(root, run_linters=False)
+
+        collect_mock.assert_called_once()
+        self.assertIn(lint_finding.title, {finding.title for finding in enabled.findings})
+        self.assertNotIn(lint_finding.title, {finding.title for finding in disabled.findings})
+
     def test_analyzer_reports_missing_project_metadata_and_manifest(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
