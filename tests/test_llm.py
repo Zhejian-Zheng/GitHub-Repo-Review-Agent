@@ -1,23 +1,13 @@
 import unittest
-from io import BytesIO
-from unittest.mock import MagicMock, patch
-from urllib.error import HTTPError, URLError
+from unittest.mock import patch
 
 from repo_review_agent.llm import (
     AIProviderError,
-    add_ai_review,
     attach_ai_error,
     build_review_prompt,
     coerce_plain_text_review,
-    extract_anthropic_text,
     extract_json_object,
     extract_markdown_review_sections,
-    extract_openai_text,
-    extract_openrouter_text,
-    generate_with_anthropic,
-    generate_with_ollama,
-    generate_with_openai,
-    generate_with_openrouter,
     normalize_ai_review_summary,
     parse_ai_review_sections,
     render_ai_review_sections,
@@ -116,86 +106,12 @@ class LLMTests(unittest.TestCase):
         self.assertIn("确定性扫描", prompt)
         self.assertIn("risky-js-app", prompt)
 
-    def test_extract_openai_text_handles_output_text(self) -> None:
-        text = extract_openai_text({"output_text": "hello"})
-
-        self.assertEqual(text, "hello")
-
-    def test_extract_openai_text_handles_output_content(self) -> None:
-        text = extract_openai_text(
-            {
-                "output": [
-                    {
-                        "content": [
-                            {"type": "output_text", "text": "hello"},
-                            {"type": "output_text", "text": "world"},
-                        ]
-                    }
-                ]
-            }
-        )
-
-        self.assertEqual(text, "hello\nworld")
-
-    def test_extract_openrouter_text_handles_chat_completion(self) -> None:
-        text = extract_openrouter_text(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": "hello from openrouter",
-                        }
-                    }
-                ]
-            }
-        )
-
-        self.assertEqual(text, "hello from openrouter")
-
-    def test_extract_openrouter_text_handles_content_parts(self) -> None:
-        text = extract_openrouter_text(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": [
-                                {"type": "text", "text": "hello"},
-                                {"type": "text", "text": "world"},
-                            ]
-                        }
-                    },
-                    "ignored",
-                ]
-            }
-        )
-
-        self.assertEqual(text, "hello\nworld")
-
-    def test_extract_openai_text_ignores_non_dict_content(self) -> None:
-        text = extract_openai_text({"output": ["ignored", {"content": ["nope", {"text": "ok"}]}]})
-
-        self.assertEqual(text, "ok")
-
     def test_resolve_model_supports_openrouter_default(self) -> None:
         self.assertEqual(resolve_model("openrouter", None), "openrouter/auto")
 
     def test_resolve_model_supports_anthropic_default(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(resolve_model("anthropic", None), "claude-opus-4-8")
-
-    def test_extract_anthropic_text_joins_text_blocks(self) -> None:
-        text = extract_anthropic_text(
-            {
-                "content": [
-                    {"type": "text", "text": "hello"},
-                    {"type": "thinking", "thinking": "ignored"},
-                    "not-a-dict",
-                    {"type": "text", "text": "world"},
-                ]
-            }
-        )
-        self.assertEqual(text, "hello\nworld")
 
     @patch.dict("os.environ", {"OPENAI_MODEL": "env-openai", "OLLAMA_MODEL": "env-ollama"})
     def test_resolve_model_uses_environment_and_unknown_fallback(self) -> None:
@@ -236,7 +152,9 @@ class LLMTests(unittest.TestCase):
 
         self.assertEqual(
             sections["project_highlights"],
-            ["The project combines deterministic findings with optional AI synthesis and traceable agent steps."],
+            [
+                "The project combines deterministic findings with optional AI synthesis and traceable agent steps."
+            ],
         )
 
     def test_parse_ai_review_sections_accepts_markdown_fallback(self) -> None:
@@ -299,7 +217,9 @@ Scanner, analyzer, API, and web UI are separated clearly.
             sections["architecture_summary"],
             ["Scanner, analyzer, API, and web UI are separated clearly."],
         )
-        self.assertEqual(sections["risks"], ["Public deployment still depends on configured secrets."])
+        self.assertEqual(
+            sections["risks"], ["Public deployment still depends on configured secrets."]
+        )
         self.assertEqual(sections["project_highlights"], [])
 
     def test_parse_ai_review_sections_coerces_aliases_strings_and_nested_items(self) -> None:
@@ -317,7 +237,9 @@ Scanner, analyzer, API, and web UI are separated clearly.
 
         self.assertEqual(sections["architecture_summary"], ["Built from scanner signals"])
         self.assertEqual(sections["risks"], ["Runtime checks are still shallow"])
-        self.assertEqual(sections["project_highlights"], ["Traceable agent - impact: Easy to audit"])
+        self.assertEqual(
+            sections["project_highlights"], ["Traceable agent - impact: Easy to audit"]
+        )
         self.assertEqual(sections["next_steps"], ["123"])
 
     def test_parse_ai_review_sections_rejects_invalid_or_empty_json(self) -> None:
@@ -328,7 +250,7 @@ Scanner, analyzer, API, and web UI are separated clearly.
             parse_ai_review_sections("{}")
 
     def test_extract_json_object_recovers_embedded_object(self) -> None:
-        self.assertEqual(extract_json_object("prefix {\"ok\": true} suffix"), {"ok": True})
+        self.assertEqual(extract_json_object('prefix {"ok": true} suffix'), {"ok": True})
         self.assertIsNone(extract_json_object("no object here"))
 
     def test_render_ai_review_sections_uses_fixed_chinese_markdown(self) -> None:
@@ -348,98 +270,6 @@ Scanner, analyzer, API, and web UI are separated clearly.
         self.assertIn("No risk details were returned", markdown)
         self.assertIn("The model did not return project highlights.", markdown)
 
-    @patch("repo_review_agent.llm.generate_with_ollama")
-    def test_add_ai_review_attaches_provider_output(self, mock_generate) -> None:
-        mock_generate.return_value = sample_ai_review_json()
-
-        report = add_ai_review(
-            sample_report(),
-            provider="ollama",
-            model="llama3.2",
-            timeout=1,
-        )
-
-        self.assertIsNotNone(report.ai_review)
-        self.assertEqual(report.ai_review.provider, "ollama")
-        self.assertEqual(report.ai_review.status, "generated")
-        self.assertIsNotNone(report.ai_review.sections)
-        self.assertIn("## AI Architecture Summary", report.ai_review.summary)
-        self.assertIn("## Project Highlights", report.ai_review.summary)
-
-    @patch("repo_review_agent.llm.generate_with_openrouter")
-    def test_add_ai_review_supports_openrouter(self, mock_generate) -> None:
-        mock_generate.return_value = sample_ai_review_json()
-
-        report = add_ai_review(
-            sample_report(),
-            provider="openrouter",
-            model="openrouter/auto",
-            timeout=1,
-        )
-
-        self.assertIsNotNone(report.ai_review)
-        self.assertEqual(report.ai_review.provider, "openrouter")
-        self.assertEqual(report.ai_review.model, "openrouter/auto")
-        self.assertEqual(
-            report.ai_review.sections["next_steps"],
-            ["Add golden report fixtures so output quality can be regression tested."],
-        )
-
-    @patch("repo_review_agent.llm.generate_with_anthropic")
-    def test_add_ai_review_supports_anthropic(self, mock_generate) -> None:
-        mock_generate.return_value = sample_ai_review_json()
-
-        report = add_ai_review(
-            sample_report(),
-            provider="anthropic",
-            timeout=1,
-        )
-
-        self.assertIsNotNone(report.ai_review)
-        self.assertEqual(report.ai_review.provider, "anthropic")
-        self.assertEqual(report.ai_review.model, "claude-opus-4-8")
-        self.assertEqual(report.ai_review.status, "generated")
-
-    def test_generate_with_anthropic_requires_key_and_text(self) -> None:
-        with patch.dict("os.environ", {}, clear=True), self.assertRaises(AIProviderError):
-            generate_with_anthropic("prompt", model="claude-opus-4-8", timeout=1, max_output_tokens=10)
-
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "key"}, clear=True),
-            patch(
-                "repo_review_agent.llm._post_json",
-                return_value={"type": "error", "error": {"message": "bad"}},
-            ),
-            self.assertRaises(AIProviderError),
-        ):
-            generate_with_anthropic("prompt", model="claude-opus-4-8", timeout=1, max_output_tokens=10)
-
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "key"}, clear=True),
-            patch("repo_review_agent.llm._post_json", return_value={"content": []}),
-            self.assertRaises(AIProviderError),
-        ):
-            generate_with_anthropic("prompt", model="claude-opus-4-8", timeout=1, max_output_tokens=10)
-
-    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "key"}, clear=True)
-    @patch("repo_review_agent.llm._post_json")
-    def test_generate_with_anthropic_returns_text(self, mock_post_json) -> None:
-        mock_post_json.return_value = {"content": [{"type": "text", "text": "claude review"}]}
-
-        text = generate_with_anthropic(
-            "prompt", model="claude-opus-4-8", timeout=1, max_output_tokens=10
-        )
-
-        self.assertEqual(text, "claude review")
-        self.assertEqual(mock_post_json.call_args.args[0], "https://api.anthropic.com/v1/messages")
-        headers = mock_post_json.call_args.kwargs["headers"]
-        self.assertEqual(headers["x-api-key"], "key")
-        self.assertEqual(headers["anthropic-version"], "2023-06-01")
-
-    def test_add_ai_review_rejects_unknown_provider(self) -> None:
-        with self.assertRaises(AIProviderError):
-            add_ai_review(sample_report(), provider="unknown")
-
     def test_attach_ai_error_records_resolved_model(self) -> None:
         report = attach_ai_error(
             sample_report(),
@@ -451,138 +281,6 @@ Scanner, analyzer, API, and web UI are separated clearly.
         self.assertIsNotNone(report.ai_review)
         self.assertEqual(report.ai_review.status, "error")
         self.assertEqual(report.ai_review.model, "gpt-5-mini")
-
-    def test_generate_with_openai_requires_key_and_text(self) -> None:
-        with patch.dict("os.environ", {}, clear=True), self.assertRaises(AIProviderError):
-            generate_with_openai("prompt", model="gpt-test", timeout=1, max_output_tokens=10)
-
-        with (
-            patch.dict("os.environ", {"OPENAI_API_KEY": "key"}, clear=True),
-            patch("repo_review_agent.llm._post_json", return_value={"output": []}),
-            self.assertRaises(AIProviderError),
-        ):
-            generate_with_openai("prompt", model="gpt-test", timeout=1, max_output_tokens=10)
-
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "key"}, clear=True)
-    @patch("repo_review_agent.llm._post_json")
-    def test_generate_with_openai_returns_text(self, mock_post_json) -> None:
-        mock_post_json.return_value = {"output_text": "ok"}
-
-        text = generate_with_openai("prompt", model="gpt-test", timeout=1, max_output_tokens=10)
-
-        self.assertEqual(text, "ok")
-
-    def test_generate_with_openrouter_requires_key_and_handles_error_payload(self) -> None:
-        with patch.dict("os.environ", {}, clear=True), self.assertRaises(AIProviderError):
-            generate_with_openrouter("prompt", model="model", timeout=1, max_output_tokens=10)
-
-        with (
-            patch.dict("os.environ", {"OPENROUTER_API_KEY": "key"}, clear=True),
-            patch("repo_review_agent.llm._post_json", return_value={"error": {"message": "bad"}}),
-            self.assertRaises(AIProviderError),
-        ):
-            generate_with_openrouter("prompt", model="model", timeout=1, max_output_tokens=10)
-
-        with (
-            patch.dict("os.environ", {"OPENROUTER_API_KEY": "key"}, clear=True),
-            patch("repo_review_agent.llm._post_json", return_value={"choices": []}),
-            self.assertRaises(AIProviderError),
-        ):
-            generate_with_openrouter("prompt", model="model", timeout=1, max_output_tokens=10)
-
-    def test_generate_with_ollama_requires_response_text(self) -> None:
-        with (
-            patch("repo_review_agent.llm._post_json", return_value={"response": ""}),
-            self.assertRaises(AIProviderError),
-        ):
-            generate_with_ollama(
-                "prompt",
-                model="llama",
-                timeout=1,
-                max_output_tokens=10,
-                base_url="http://localhost:11434/",
-            )
-
-        with (
-            patch("repo_review_agent.llm._post_json", return_value={"response": 123}),
-            self.assertRaises(AIProviderError),
-        ):
-            generate_with_ollama(
-                "prompt",
-                model="llama",
-                timeout=1,
-                max_output_tokens=10,
-                base_url="http://localhost:11434/",
-            )
-
-    @patch("repo_review_agent.llm._post_json")
-    def test_generate_with_ollama_returns_response_text(self, mock_post_json) -> None:
-        mock_post_json.return_value = {"response": "local review"}
-
-        text = generate_with_ollama(
-            "prompt",
-            model="llama",
-            timeout=1,
-            max_output_tokens=10,
-            base_url="http://localhost:11434/",
-        )
-
-        self.assertEqual(text, "local review")
-        self.assertEqual(mock_post_json.call_args.args[0], "http://localhost:11434/api/generate")
-
-    @patch.dict(
-        "os.environ",
-        {
-            "OPENROUTER_API_KEY": "key",
-            "OPENROUTER_HTTP_REFERER": "https://example.com",
-            "OPENROUTER_APP_TITLE": "Demo",
-        },
-        clear=True,
-    )
-    @patch("repo_review_agent.llm._post_json")
-    def test_generate_with_openrouter_sends_optional_headers(self, mock_post_json) -> None:
-        mock_post_json.return_value = {"choices": [{"message": {"content": "ok"}}]}
-
-        text = generate_with_openrouter("prompt", model="model", timeout=1, max_output_tokens=10)
-
-        self.assertEqual(text, "ok")
-        payload = mock_post_json.call_args.args[1]
-        self.assertEqual(payload["response_format"], {"type": "json_object"})
-        headers = mock_post_json.call_args.kwargs["headers"]
-        self.assertEqual(headers["HTTP-Referer"], "https://example.com")
-        self.assertEqual(headers["X-OpenRouter-Title"], "Demo")
-
-    @patch("repo_review_agent.llm.urlopen")
-    def test_post_json_handles_http_url_json_and_shape_errors(self, mock_urlopen) -> None:
-        from repo_review_agent.llm import _post_json
-
-        http_error = HTTPError(
-            "https://api.example.test",
-            500,
-            "server error",
-            {},
-            BytesIO(b"broken"),
-        )
-        mock_urlopen.side_effect = http_error
-        with self.assertRaises(AIProviderError):
-            _post_json("https://api.example.test", {}, timeout=1, headers={})
-
-        mock_urlopen.side_effect = URLError("offline")
-        with self.assertRaises(AIProviderError):
-            _post_json("https://api.example.test", {}, timeout=1, headers={})
-
-        bad_response = MagicMock()
-        bad_response.__enter__.return_value.read.return_value = b"not-json"
-        mock_urlopen.side_effect = None
-        mock_urlopen.return_value = bad_response
-        with self.assertRaises(AIProviderError):
-            _post_json("https://api.example.test", {}, timeout=1, headers={})
-
-        list_response = MagicMock()
-        list_response.__enter__.return_value.read.return_value = b"[]"
-        mock_urlopen.return_value = list_response
-        with self.assertRaises(AIProviderError):
-            _post_json("https://api.example.test", {}, timeout=1, headers={})
 
 
 if __name__ == "__main__":

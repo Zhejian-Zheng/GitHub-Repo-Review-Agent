@@ -108,11 +108,14 @@ def _localize_overview_zh(text: str) -> str:
 
 
 def _localize_finding_zh(finding: Finding) -> Finding:
-    return Finding(
+    from .findings import finding_fingerprint
+
+    return replace(finding,
+        fingerprint=finding_fingerprint(finding),
         title=_FINDING_TITLE_ZH.get(finding.title, finding.title),
         severity=finding.severity,
         category=_CATEGORY_ZH.get(finding.category, finding.category),
-        evidence=[_localize_evidence_zh(item) for item in finding.evidence],
+        evidence=finding.evidence if finding.source == "ai" else [_localize_evidence_zh(item) for item in finding.evidence],
         recommendation=_RECOMMENDATION_ZH.get(finding.recommendation, finding.recommendation),
         evidence_paths=finding.evidence_paths,
     )
@@ -298,5 +301,7 @@ _AGENT_THOUGHT_ZH = {
     "I have enough repository context to run deterministic risk analysis.": "我已经有足够的仓库上下文，可以运行确定性风险分析。",
     "The structured findings are ready, so I can ask the selected model to synthesize the review.": "结构化发现已经准备好，可以请求所选模型生成总结评审。",
     "The review report is complete and should be rendered for the user.": "评审报告已经完成，可以渲染给用户。",
+    "Executed repository review tool.": "已执行仓库评审工具。",
+    "Generated structured AI review.": "已生成结构化 AI 评审。",
     "The model requested this tool through OpenAI function calling.": "模型通过 OpenAI function calling 请求了这个工具。",
 }

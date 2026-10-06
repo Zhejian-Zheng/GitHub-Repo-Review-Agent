@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .agent import RepoReviewAgent
-from .analyzer import analyze_repository
-from .chatgpt_agent import ChatGPTReviewAgent
 from .env import load_local_env
-from .function_agent import OpenAIFunctionCallingAgent
 from .github import (
     GitHubIntegrationError,
     apply_github_issue_mode,
@@ -21,8 +19,10 @@ from .github import (
 )
 from .history import HistoryStoreError, SupabaseHistoryStore
 from .i18n import localize_report
-from .llm import AIProviderError, add_ai_review, attach_ai_error
+from .incremental import load_changed_files
+from .llm import AIProviderError
 from .report import render_markdown, write_json, write_markdown
+from .service import run_review
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,72 +31,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     with resolve_target(args.target) as repo_path:
-        if args.chatgpt_agent:
-            agent = ChatGPTReviewAgent(
-                model=args.ai_model,
-                timeout=args.ai_timeout,
-                max_output_tokens=args.ai_max_output_tokens,
-                max_files=args.max_files,
-                max_file_size=args.max_file_size,
-                report_language=args.report_language,
-            )
-            try:
-                report = agent.run(repo_path)
-            except AIProviderError as exc:
-                raise SystemExit(str(exc)) from exc
-        elif args.function_calling:
-            agent = OpenAIFunctionCallingAgent(
-                model=args.ai_model,
-                timeout=args.ai_timeout,
-                max_output_tokens=args.ai_max_output_tokens,
-                max_files=args.max_files,
-                max_file_size=args.max_file_size,
-                report_language=args.report_language,
-            )
-            try:
-                report = agent.run(repo_path)
-            except AIProviderError as exc:
-                raise SystemExit(str(exc)) from exc
-        elif args.agent:
-            agent = RepoReviewAgent(
-                max_files=args.max_files,
-                max_file_size=args.max_file_size,
-                ai_provider=args.ai_provider,
-                ai_model=args.ai_model,
-                ai_timeout=args.ai_timeout,
-                ai_max_output_tokens=args.ai_max_output_tokens,
-                ollama_url=args.ollama_url,
-                fail_on_ai_error=args.fail_on_ai_error,
-                report_language=args.report_language,
-            )
-            report = agent.run(repo_path)
-        else:
-            report = analyze_repository(
-                repo_path,
-                max_files=args.max_files,
-                max_file_size=args.max_file_size,
+        mode = ('chatgpt-agent' if args.chatgpt_agent else 'function-calling'
+                if args.function_calling else 'agent' if args.agent else 'direct')
+        try:
+            report = run_review(
+                repo_path, mode=mode, max_files=args.max_files, max_file_size=args.max_file_size,
+                ai_provider=args.ai_provider, ai_model=args.ai_model, ai_timeout=args.ai_timeout,
+                ai_max_output_tokens=args.ai_max_output_tokens, ollama_url=args.ollama_url,
+                fail_on_ai_error=args.fail_on_ai_error, report_language=args.report_language,
                 run_linters=args.lint,
+                config_path=args.config, vulnerability_scan=args.vulnerability_scan,
+                trust_repository_config=args.trust_repository_config,
+                **({"changed_files":load_changed_files(args.changed_files_json)} if args.changed_files_json else {}),
+                **({"ai_token_budget":args.ai_token_budget} if args.ai_token_budget is not None else {}),
             )
-            if args.ai_provider != "none":
-                try:
-                    report = add_ai_review(
-                        report,
-                        provider=args.ai_provider,
-                        model=args.ai_model,
-                        language=args.report_language,
-                        timeout=args.ai_timeout,
-                        max_output_tokens=args.ai_max_output_tokens,
-                        ollama_url=args.ollama_url,
-                    )
-                except AIProviderError as exc:
-                    if args.fail_on_ai_error:
-                        raise SystemExit(str(exc)) from exc
-                    report = attach_ai_error(
-                        report,
-                        provider=args.ai_provider,
-                        model=args.ai_model,
-                        error=str(exc),
-                    )
+        except (AIProviderError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
 
         history_result = None
         if args.save_history:
@@ -116,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
             except HistoryStoreError as exc:
                 raise SystemExit(str(exc)) from exc
 
+        if history_result:
+            report = replace(report, finding_feedback=history_result.finding_feedback)
         report = localize_report(report, args.report_language)
 
         if args.output:
@@ -172,20 +124,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("target", help="Local repository path or GitHub URL")
     parser.add_argument("-o", "--output", type=Path, help="Write Markdown report to this path")
     parser.add_argument("--json", type=Path, help="Write structured JSON report to this path")
+    parser.add_argument("--trust-repository-config", action="store_true", help="Trust the target repository policy (may hide or downgrade findings)")
+    parser.add_argument("--config", type=Path, help="Use this review policy JSON file instead of .repo-review.json")
+    parser.add_argument("--vulnerability-scan", action="store_true", help="Opt in to sending exact dependency names and versions to OSV for known-vulnerability checks")
     parser.add_argument(
         "--agent",
         action="store_true",
-        help="Run the custom tool-calling RepoReviewAgent instead of the direct analysis pipeline.",
+        help="Run the LangChain review agent (offline LangGraph workflow when no provider is selected).",
     )
     parser.add_argument(
         "--function-calling",
         action="store_true",
-        help="Run the OpenAI Responses API function-calling agent. Requires OPENAI_API_KEY.",
+        help="Compatibility alias for the LangChain OpenAI agent. Requires OPENAI_API_KEY.",
     )
     parser.add_argument(
         "--chatgpt-agent",
         action="store_true",
-        help="Run the ChatGPT API repository review agent. Requires OPENAI_API_KEY.",
+        help="Compatibility alias for the LangChain OpenAI agent with the ChatGPT report label.",
     )
     parser.add_argument(
         "--ai-provider",
@@ -293,6 +248,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=30,
         help="Timeout in seconds for Supabase history requests.",
     )
+    parser.add_argument('--changed-files-json', type=Path, help='Prioritize inspected PR files using the GitHub PR-files JSON array.')
+    parser.add_argument('--ai-token-budget', type=int, help='Conservative total token reservation budget across model calls.')
     return parser
 
 
@@ -305,12 +262,20 @@ class resolve_target:
         if _looks_like_git_url(self.target):
             self._tmpdir = tempfile.TemporaryDirectory(prefix="repo-review-")
             clone_path = Path(self._tmpdir.name) / "repo"
-            subprocess.run(
-                ["git", "clone", "--depth", "1", self.target, str(clone_path)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            try:
+                subprocess.run(
+                    ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--",
+                     self.target, str(clone_path)],
+                    check=True, capture_output=True, text=True,
+                    timeout=max(1, int(os.environ.get("REPO_REVIEW_CLONE_TIMEOUT", "120"))),
+                    stdin=subprocess.DEVNULL,
+                    env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never",
+                             GIT_SSH_COMMAND="ssh -oBatchMode=yes -oConnectTimeout=15"),
+                )
+            except BaseException:
+                self._tmpdir.cleanup()
+                self._tmpdir = None
+                raise
             return clone_path
 
         path = Path(self.target).expanduser().resolve()

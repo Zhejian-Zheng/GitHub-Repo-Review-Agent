@@ -34,14 +34,14 @@ export function isSessionExpiring(session, marginSeconds = REFRESH_MARGIN_SECOND
   return Number.isFinite(expiresAtMs) && expiresAtMs - marginSeconds * 1000 <= Date.now();
 }
 
-export async function getValidSession(session) {
+export async function getValidSession(session, options = {}) {
   if (!session?.access_token) return null;
   if (!isSessionExpiring(session)) return session;
   if (!session.refresh_token) {
     clearStoredSession();
     return null;
   }
-  return refreshSession(session.refresh_token);
+  return refreshSession(session.refresh_token, options);
 }
 
 export function saveStoredSession(session) {
@@ -109,10 +109,11 @@ export async function getCurrentUser(accessToken) {
   return data;
 }
 
-export async function refreshSession(refreshToken) {
+export async function refreshSession(refreshToken, options = {}) {
   const data = await authRequest("/token?grant_type=refresh_token", {
     method: "POST",
-    body: { refresh_token: refreshToken }
+    body: { refresh_token: refreshToken },
+    signal: options.signal
   });
   const session = normalizeSession(data);
   saveStoredSession(session);
@@ -171,7 +172,7 @@ function authRedirectUrl() {
   return `${window.location.origin}${basePath}`;
 }
 
-async function authRequest(path, { method, body, accessToken, redirectTo } = {}) {
+async function authRequest(path, { method, body, accessToken, redirectTo, signal } = {}) {
   if (!isAuthConfigured()) {
     throw new Error("Supabase auth is not configured.");
   }
@@ -189,15 +190,26 @@ async function authRequest(path, { method, body, accessToken, redirectTo } = {})
     url.searchParams.set("redirect_to", redirectTo);
   }
 
-  const response = await fetch(url.toString(), {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined
-  });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new Error(data?.msg || data?.message || data?.error_description || data?.error || "Auth failed.");
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) controller.abort();
+  const timeout = setTimeout(abort, 15000);
+  try {
+    const response = await fetch(url.toString(), {
+      method,
+      signal: controller.signal,
+      headers,
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : {};
+    if (!response.ok) {
+      throw new Error(data?.msg || data?.message || data?.error_description || data?.error || "Auth failed.");
+    }
+    return data;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
   }
-  return data;
 }

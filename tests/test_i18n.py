@@ -161,3 +161,31 @@ class I18nTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FindingMetadataLocalizationTests(unittest.TestCase):
+    def test_localized_finding_preserves_source_location_and_identity(self):
+        from repo_review_agent.i18n import _localize_finding_zh
+        from repo_review_agent.models import Finding
+        finding = Finding('Example','low','code',['return 1'],'Review', ['app.py'], source='ai',
+                          path='app.py',start_line=2,end_line=2,confidence=0.9,fingerprint='stable')
+        result = _localize_finding_zh(finding)
+        self.assertEqual(result.source, 'ai')
+        self.assertEqual(result.start_line, 2)
+        self.assertEqual(result.fingerprint, 'stable')
+
+    def test_fingerprint_is_stable_across_report_languages(self):
+        from repo_review_agent.i18n import localize_report
+        from repo_review_agent.models import Finding, ReviewReport
+        finding = Finding('Add an explicit open-source license','medium','project hygiene',['No LICENSE file was detected.'],'Add license',['LICENSE'])
+        report = ReviewReport('repo','',[],{}, {},[finding])
+        en = report.to_dict()['findings'][0]['fingerprint']
+        zh = localize_report(report,'zh-CN').to_dict()['findings'][0]['fingerprint']
+        self.assertEqual(zh,en)
+
+    def test_ai_source_quote_is_never_translated(self):
+        from repo_review_agent.i18n import _localize_finding_zh
+        from repo_review_agent.models import Finding
+        quote = 'No LICENSE file was detected.'
+        finding = Finding('Example','high','code',[quote],'Review',['app.py'],source='ai',path='app.py',start_line=1,end_line=1)
+        self.assertEqual(_localize_finding_zh(finding).evidence,[quote])

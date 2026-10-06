@@ -141,7 +141,7 @@ class CLITests(unittest.TestCase):
 
         self.assertIn("--github-repo owner/repo is required", str(context.exception))
 
-    @patch("repo_review_agent.cli.add_ai_review")
+    @patch("repo_review_agent.service.add_ai_review")
     def test_main_attaches_ai_error_when_provider_fails(self, mock_add_ai_review) -> None:
         from repo_review_agent.llm import AIProviderError
 
@@ -168,7 +168,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("AI review was not generated: `model offline`", markdown)
 
-    @patch("repo_review_agent.cli.add_ai_review")
+    @patch("repo_review_agent.service.add_ai_review")
     def test_main_can_fail_on_ai_error(self, mock_add_ai_review) -> None:
         from repo_review_agent.llm import AIProviderError
 
@@ -184,7 +184,7 @@ class CLITests(unittest.TestCase):
 
         self.assertEqual(str(context.exception), "model offline")
 
-    @patch("repo_review_agent.cli.RepoReviewAgent")
+    @patch("repo_review_agent.service.RepoReviewAgent")
     def test_main_runs_custom_agent_mode(self, mock_agent_class) -> None:
         mock_agent_class.return_value.run.return_value = minimal_report()
 
@@ -199,7 +199,7 @@ class CLITests(unittest.TestCase):
         mock_agent_class.assert_called_once()
         mock_agent_class.return_value.run.assert_called_once_with(root.resolve())
 
-    @patch("repo_review_agent.cli.OpenAIFunctionCallingAgent")
+    @patch("repo_review_agent.service.OpenAIFunctionCallingAgent")
     def test_main_runs_function_calling_mode(self, mock_agent_class) -> None:
         mock_agent_class.return_value.run.return_value = minimal_report()
 
@@ -252,7 +252,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(mock_store.save_report.call_args.kwargs["repo_url"], "owner/repo")
         self.assertIn("# Repository Review: repo", mock_store.save_report.call_args.kwargs["report_markdown"])
 
-    @patch("repo_review_agent.cli.ChatGPTReviewAgent")
+    @patch("repo_review_agent.service.ChatGPTReviewAgent")
     def test_main_runs_chatgpt_agent_mode(self, mock_agent_class) -> None:
         mock_agent_class.return_value.run.return_value = minimal_report()
 
@@ -267,7 +267,7 @@ class CLITests(unittest.TestCase):
         mock_agent_class.assert_called_once()
         mock_agent_class.return_value.run.assert_called_once_with(root.resolve())
 
-    @patch("repo_review_agent.cli.ChatGPTReviewAgent")
+    @patch("repo_review_agent.service.ChatGPTReviewAgent")
     def test_main_exits_when_chatgpt_agent_fails(self, mock_agent_class) -> None:
         from repo_review_agent.llm import AIProviderError
 
@@ -282,7 +282,7 @@ class CLITests(unittest.TestCase):
 
         self.assertEqual(str(context.exception), "missing key")
 
-    @patch("repo_review_agent.cli.OpenAIFunctionCallingAgent")
+    @patch("repo_review_agent.service.OpenAIFunctionCallingAgent")
     def test_main_exits_when_function_calling_agent_fails(self, mock_agent_class) -> None:
         from repo_review_agent.llm import AIProviderError
 
@@ -314,7 +314,7 @@ class CLITests(unittest.TestCase):
 
         with resolve_target("https://github.com/owner/repo") as repo_path:
             self.assertEqual(repo_path.name, "repo")
-            self.assertTrue(str(repo_path.parent).startswith("/tmp/repo-review-"))
+            self.assertTrue(repo_path.parent.name.startswith("repo-review-"))
 
         mock_run.assert_called_once()
 

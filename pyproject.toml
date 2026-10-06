@@ -24,34 +24,50 @@ classifiers = [
 ]
 dependencies = [
   "python-dotenv>=1.0",
+  "langchain>=1.1,<2",
+  "langgraph>=1.0,<2",
+  "pydantic>=2.7,<3",
+  "packaging>=24",
 ]
 
 [project.scripts]
 repo-review = "repo_review_agent.cli:main"
+repo-review-evaluate = "repo_review_agent.evaluation:main"
 repo-review-demo-check = "repo_review_agent.demo:main"
 repo-review-web = "repo_review_agent.web:main"
 repo-review-mcp = "repo_review_agent.mcp_server:main"
 repo-review-pr-bot = "repo_review_agent.pr_bot:main"
 
 [project.optional-dependencies]
+langfuse = ["langfuse==4.16.0"]
+openai = ["langchain-openai>=1.0,<2"]
+anthropic = ["langchain-anthropic>=1.0,<2"]
+ollama = ["langchain-ollama>=1.0,<2"]
+
 web = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
 ]
 mcp = [
-  "mcp>=1.0",
+  "mcp>=1.0,<2",
 ]
 all = [
+  "langchain-openai>=1.0,<2",
+  "langchain-anthropic>=1.0,<2",
+  "langchain-ollama>=1.0,<2",
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
-  "mcp>=1.0",
+  "mcp>=1.0,<2",
 ]
 dev = [
+  "langchain-openai>=1.0,<2",
+  "langchain-anthropic>=1.0,<2",
+  "langchain-ollama>=1.0,<2",
   "coverage[toml]>=7.6",
   "ruff>=0.8",
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
-  "mcp>=1.0",
+  "mcp>=1.0,<2",
 ]
 
 [tool.setuptools.packages.find]

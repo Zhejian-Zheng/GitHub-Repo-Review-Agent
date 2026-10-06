@@ -46,7 +46,7 @@ class WebAPITests(unittest.TestCase):
         self.assertEqual(report.repo_name, Path(tmp).name)
         self.assertTrue(report.findings)
 
-    @patch("repo_review_agent.web.RepoReviewAgent")
+    @patch("repo_review_agent.service.RepoReviewAgent")
     def test_run_review_for_path_supports_agent_mode(self, mock_agent_class) -> None:
         from repo_review_agent.models import ReviewReport
         from repo_review_agent.web import ReviewRequest, run_review_for_path
@@ -64,10 +64,11 @@ class WebAPITests(unittest.TestCase):
         request = ReviewRequest(target=".", mode="agent", ai_provider="ollama", ai_model="llama")
         report = run_review_for_path(request, Path("."))
 
-        self.assertIs(report, expected)
+        self.assertEqual(report.repo_name, expected.repo_name)
+        self.assertEqual(report.findings, expected.findings)
         mock_agent_class.assert_called_once()
 
-    @patch("repo_review_agent.web.OpenAIFunctionCallingAgent")
+    @patch("repo_review_agent.service.OpenAIFunctionCallingAgent")
     def test_run_review_for_path_supports_function_calling_mode(self, mock_agent_class) -> None:
         from repo_review_agent.models import ReviewReport
         from repo_review_agent.web import ReviewRequest, run_review_for_path
@@ -85,10 +86,11 @@ class WebAPITests(unittest.TestCase):
         request = ReviewRequest(target=".", mode="function-calling", ai_model="gpt-test")
         report = run_review_for_path(request, Path("."))
 
-        self.assertIs(report, expected)
+        self.assertEqual(report.repo_name, expected.repo_name)
+        self.assertEqual(report.findings, expected.findings)
         mock_agent_class.assert_called_once()
 
-    @patch("repo_review_agent.web.add_ai_review")
+    @patch("repo_review_agent.service.add_ai_review")
     def test_run_review_for_path_attaches_ai_error_for_direct_mode(self, mock_add_ai_review) -> None:
         from repo_review_agent.llm import AIProviderError
         from repo_review_agent.web import ReviewRequest, run_review_for_path
@@ -298,7 +300,7 @@ class WebAPITests(unittest.TestCase):
 
         self.assertIsInstance(store, InMemoryReviewJobStore)
 
-    @patch("repo_review_agent.web.execute_review_request")
+    @patch("repo_review_agent.web.BaseReviewJobStore._execute")
     def test_supabase_backed_review_job_store_persists_completed_job(
         self,
         mock_execute_review,
@@ -310,6 +312,7 @@ class WebAPITests(unittest.TestCase):
         storage = _FakeSupabaseJobStorage()
         store = SupabaseBackedReviewJobStore(storage=storage, max_workers=1)
         store._executor = _ImmediateExecutor()  # noqa: SLF001
+        store.start = store.sweep
 
         submitted = store.submit(
             request=ReviewRequest(target="https://github.com/owner/repo", mode="direct"),
@@ -324,7 +327,7 @@ class WebAPITests(unittest.TestCase):
         self.assertEqual(storage.created_payload["request_json"]["mode"], "direct")
         self.assertEqual(storage.updated_statuses, ["running", "completed"])
 
-    @patch("repo_review_agent.web.execute_review_request")
+    @patch("repo_review_agent.web.BaseReviewJobStore._execute")
     def test_supabase_backed_review_job_store_marks_failed_jobs(self, mock_execute_review) -> None:
         from repo_review_agent.web import ReviewRequest, SupabaseBackedReviewJobStore
 
@@ -332,6 +335,7 @@ class WebAPITests(unittest.TestCase):
         storage = _FakeSupabaseJobStorage()
         store = SupabaseBackedReviewJobStore(storage=storage, max_workers=1)
         store._executor = _ImmediateExecutor()  # noqa: SLF001
+        store.start = store.sweep
 
         submitted = store.submit(
             request=ReviewRequest(target="https://github.com/owner/repo", mode="direct"),
@@ -343,8 +347,8 @@ class WebAPITests(unittest.TestCase):
         self.assertEqual(failed.error, "broken")
         self.assertEqual(storage.updated_statuses, ["running", "failed"])
 
-    @patch("repo_review_agent.web.execute_review_request")
-    def test_supabase_backed_review_job_store_ignores_failed_status_write_errors(
+    @patch("repo_review_agent.web.BaseReviewJobStore._execute")
+    def test_supabase_backed_review_job_store_logs_failed_status_write_errors(
         self,
         mock_execute_review,
     ) -> None:
@@ -354,9 +358,10 @@ class WebAPITests(unittest.TestCase):
         storage = _FakeSupabaseJobStorage(raise_on_failed_update=True)
         store = SupabaseBackedReviewJobStore(storage=storage, max_workers=1)
 
+        store._leases["job-id"] = "lease"
         store._run("job-id", ReviewRequest(target="https://github.com/owner/repo"), None)  # noqa: SLF001
 
-        self.assertEqual(storage.updated_statuses, ["running", "failed"])
+        self.assertEqual(storage.updated_statuses, ["failed"])
 
     def test_supabase_backed_review_job_store_handles_missing_and_stale_jobs(self) -> None:
         from repo_review_agent.web import SupabaseBackedReviewJobStore
@@ -365,7 +370,8 @@ class WebAPITests(unittest.TestCase):
         store = SupabaseBackedReviewJobStore(storage=storage, max_workers=1)
 
         self.assertIsNone(store.get("missing"))
-        self.assertEqual(store.fail_stale_running_jobs(), 2)
+        store.sweep()
+        self.assertTrue(storage.recovered)
 
     def test_job_from_supabase_row_validates_status_and_result(self) -> None:
         from repo_review_agent.history import HistoryStoreError
@@ -397,7 +403,7 @@ class WebAPITests(unittest.TestCase):
 
         self.assertEqual(job.to_dict()["error"], "nope")
 
-    @patch("repo_review_agent.web.execute_review_request")
+    @patch("repo_review_agent.web.BaseReviewJobStore._execute")
     def test_in_memory_review_job_store_records_failed_jobs(self, mock_execute_review) -> None:
         from repo_review_agent.web import InMemoryReviewJobStore, ReviewRequest
 
@@ -475,7 +481,7 @@ class WebAPITests(unittest.TestCase):
         self.assertIn("markdown", response)
         self.assertEqual(context.exception.status_code, 400)
 
-    @patch("repo_review_agent.web.execute_review_request")
+    @patch("repo_review_agent.web.BaseReviewJobStore.execute_sync")
     def test_review_endpoint_maps_permission_errors_to_unauthorized(
         self,
         mock_execute_review,
@@ -502,12 +508,15 @@ class WebAPITests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 401)
 
+    @patch("repo_review_agent.web.BaseReviewJobStore._execute",
+           side_effect=lambda request, user, *args: __import__("repo_review_agent.web", fromlist=["execute_review_request"]).execute_review_request(request, user))
     @patch("repo_review_agent.web.SupabaseHistoryStore")
     @patch("repo_review_agent.web.get_supabase_user")
     def test_review_endpoint_saves_history_for_authenticated_user(
         self,
         mock_get_user,
         mock_store_class,
+        mock_execute,
     ) -> None:
         from repo_review_agent.auth import AuthUser
         from repo_review_agent.web import ReviewRequest, create_app
@@ -548,7 +557,7 @@ class WebAPITests(unittest.TestCase):
         self.assertEqual(mock_store.save_report.call_args.kwargs["owner_id"], "user-id")
         self.assertEqual(mock_store.save_report.call_args.kwargs["repo_url"], "owner/repo")
 
-    @patch("repo_review_agent.web.execute_review_request")
+    @patch("repo_review_agent.web.BaseReviewJobStore._execute")
     def test_review_job_endpoint_runs_review_in_background(self, mock_execute_review) -> None:
         from repo_review_agent.web import ReviewRequest, create_app
 
@@ -640,8 +649,8 @@ class WebAPITests(unittest.TestCase):
         with self.assertRaises(HTTPException) as get_context:
             get_endpoint(_fake_request(headers={}), "job-id")
 
-        self.assertEqual(submit_context.exception.status_code, 400)
-        self.assertEqual(get_context.exception.status_code, 400)
+        self.assertEqual(submit_context.exception.status_code, 503)
+        self.assertEqual(get_context.exception.status_code, 503)
 
     def test_review_job_endpoint_returns_not_found_for_missing_jobs(self) -> None:
         from fastapi import HTTPException
@@ -660,7 +669,7 @@ class WebAPITests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 404)
 
-    @patch("repo_review_agent.web.execute_review_request")
+    @patch("repo_review_agent.web.BaseReviewJobStore._execute")
     @patch("repo_review_agent.web.get_supabase_user")
     def test_review_job_endpoint_protects_user_owned_jobs(
         self,
@@ -768,8 +777,8 @@ class WebAPITests(unittest.TestCase):
             repositories_endpoint(_fake_request(headers={"authorization": "Bearer token"}))
 
         self.assertEqual(not_found_context.exception.status_code, 404)
-        self.assertEqual(detail_error_context.exception.status_code, 400)
-        self.assertEqual(list_error_context.exception.status_code, 400)
+        self.assertEqual(detail_error_context.exception.status_code, 503)
+        self.assertEqual(list_error_context.exception.status_code, 503)
 
     def test_execute_review_request_requires_user_when_saving_history(self) -> None:
         from repo_review_agent.models import ReviewReport
@@ -858,6 +867,23 @@ class _FakeSupabaseJobStorage:
         self.rows: dict[str, dict] = {}
         self.created_payload: dict | None = None
         self.updated_statuses: list[str] = []
+
+    def enqueue_job(self, *, max_pending, per_user_limit, daily_limit=100, **kwargs):
+        return self.create_job(**kwargs)
+
+    def claim_job(self, *, lease_token, lease_seconds):
+        for row in self.rows.values():
+            if row["status"] == "queued":
+                self.update_job(row["id"], status="running")
+                row["lease_token"] = lease_token
+                return dict(row)
+        return None
+
+    def recover_jobs(self, *, result_ttl):
+        self.recovered = True
+
+    def write_claimed_job(self, job_id, *, lease_token, phase=None, **kwargs):
+        return self.update_job(job_id, **kwargs)
 
     def create_job(
         self,

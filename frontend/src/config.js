@@ -38,19 +38,19 @@ export const MODEL_OPTIONS = [
 export const progressCopy = {
   en: [
     {
-      key: "scan",
-      label: "Scan repository",
-      detail: "Map files, languages, manifests, and CI signals.",
+      key: "queued",
+      label: "Waiting for worker",
+      detail: "Your review is queued.",
       icon: Search
     },
     {
-      key: "inspect",
-      label: "Inspect key files",
-      detail: "Read README, dependency files, CI, and docs.",
+      key: "cloning",
+      label: "Prepare repository",
+      detail: "Clone the repository and prepare its files.",
       icon: FileSearch
     },
     {
-      key: "analyze",
+      key: "analyzing",
       label: "Run rule checks",
       detail: "Generate deterministic findings and evidence.",
       icon: ListChecks
@@ -62,7 +62,7 @@ export const progressCopy = {
       icon: Sparkles
     },
     {
-      key: "render",
+      key: "completed",
       label: "Render report",
       detail: "Build Markdown, JSON, issue suggestions, and trace.",
       icon: FileText
@@ -70,19 +70,19 @@ export const progressCopy = {
   ],
   "zh-CN": [
     {
-      key: "scan",
-      label: "扫描仓库",
-      detail: "识别文件、语言、依赖清单和 CI 信号。",
+      key: "queued",
+      label: "等待执行",
+      detail: "评审任务已进入队列。",
       icon: Search
     },
     {
-      key: "inspect",
-      label: "检查关键文件",
-      detail: "读取 README、依赖文件、CI 和文档。",
+      key: "cloning",
+      label: "准备仓库",
+      detail: "克隆仓库并准备文件。",
       icon: FileSearch
     },
     {
-      key: "analyze",
+      key: "analyzing",
       label: "运行规则检查",
       detail: "生成确定性发现、证据和建议。",
       icon: ListChecks
@@ -94,7 +94,7 @@ export const progressCopy = {
       icon: Sparkles
     },
     {
-      key: "render",
+      key: "completed",
       label: "渲染报告",
       detail: "生成 Markdown、JSON、Issue 建议和轨迹。",
       icon: FileText

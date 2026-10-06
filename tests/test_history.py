@@ -203,78 +203,26 @@ class HistoryTests(unittest.TestCase):
 
         self.assertEqual(score, 58)
 
-    def test_supabase_history_store_saves_report_and_diff_payloads(self) -> None:
-        report = sample_report()
-        previous = [
-            FindingSnapshot(
-                fingerprint=finding_fingerprint(report.findings[0]),
-                title=report.findings[0].title,
-                severity=report.findings[0].severity,
-                category=report.findings[0].category,
-                evidence=report.findings[0].evidence,
-                evidence_paths=report.findings[0].evidence_paths,
-                recommendation=report.findings[0].recommendation,
-            )
-        ]
-        store = FakeSupabaseHistoryStore(previous_findings=previous)
-
-        result = store.save_report(
-            report=report,
-            repo_url="owner/repo",
-            branch="main",
-            commit_sha="abc123",
-            report_markdown="# Report",
-        )
-
-        self.assertEqual(result.repository_id, "repo-id")
-        self.assertEqual(result.review_run_id, "run-id")
-        self.assertEqual(result.health_score, 83)
-
-        review_run_call = next(call for call in store.calls if call[1] == "review_runs")
-        review_run_payload = review_run_call[2][0]  # type: ignore[index]
-        self.assertEqual(review_run_payload["new_findings_count"], 1)
-        self.assertEqual(review_run_payload["existing_findings_count"], 1)
-        self.assertEqual(review_run_payload["resolved_findings_count"], 0)
-        self.assertEqual(review_run_payload["report_markdown"], "# Report")
-
-        findings_call = next(call for call in store.calls if call[1] == "findings")
-        finding_statuses = {row["title"]: row["status"] for row in findings_call[2]}  # type: ignore[index]
-        self.assertEqual(finding_statuses["Add automated tests"], "existing")
-        self.assertEqual(finding_statuses["Add CI workflow"], "new")
-
-    def test_supabase_history_store_looks_up_repository_by_owner_and_repo_url(self) -> None:
-        store = FakeSupabaseHistoryStore()
-
-        store.save_report(
-            report=sample_report(),
-            repo_url="owner/repo",
-            branch="main",
-            commit_sha="abc123",
-            report_markdown="# Report",
-            owner_id="user-id",
-        )
-
-        repository_lookup = next(call for call in store.calls if call[1].startswith("repositories?repo_url"))
-        self.assertEqual(repository_lookup[0], "GET")
-        self.assertIn("repo_url=eq.owner%2Frepo", repository_lookup[1])
-        self.assertIn("owner_id=eq.user-id", repository_lookup[1])
-
-    def test_supabase_history_store_creates_repository_when_owner_has_no_match(self) -> None:
-        store = FakeSupabaseHistoryStore(existing_repository=False)
-
-        store.save_report(
-            report=sample_report(),
-            repo_url="owner/repo",
-            branch="main",
-            commit_sha="abc123",
-            report_markdown="# Report",
-            owner_id="user-id",
-        )
-
-        repository_create = next(call for call in store.calls if call[0] == "POST" and call[1] == "repositories")
-        repository_payload = repository_create[2][0]  # type: ignore[index]
-        self.assertEqual(repository_payload["owner_id"], "user-id")
-        self.assertEqual(repository_payload["repo_url"], "owner/repo")
+    def test_supabase_history_store_saves_one_owner_scoped_transaction(self) -> None:
+        result = {"repository_id": "repo-id", "review_run_id": "run-id", "health_score": 83,
+                  "finding_feedback": [], "comparison": {
+                      "new_findings": [], "existing_findings": [], "resolved_findings": []}}
+        store = SupabaseHistoryStore(supabase_url="https://example.com", service_key="test")
+        with patch.object(store, "_request", return_value=result) as request:
+            saved = store.save_report(report=sample_report(), repo_url="owner/repo",
+                                      branch="main", commit_sha="abc123", owner_id="user-id",
+                                      report_markdown="# Report")
+        self.assertEqual((saved.repository_id, saved.review_run_id, saved.health_score),
+                         ("repo-id", "run-id", 83))
+        self.assertEqual(request.call_count, 1)
+        payload = request.call_args.args[2]["p_payload"]
+        self.assertEqual(payload["owner_id"], "user-id")
+        self.assertEqual(payload["repo_url"], "owner/repo")
+        self.assertEqual(payload["branch"], "main")
+        self.assertEqual(payload["commit_sha"], "abc123")
+        self.assertEqual(payload["report_markdown"], "# Report")
+        self.assertEqual(len(payload["report"]["findings"]), 2)
+        self.assertTrue(all(row["fingerprint"] for row in payload["report"]["findings"]))
 
     def test_supabase_history_store_lists_repositories_for_owner(self) -> None:
         store = FakeSupabaseHistoryStore()

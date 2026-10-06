@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from .findings import effective_findings
 from .github import GitHubClient, GitHubIntegrationError, ensure_comment_marker
 from .history import calculate_health_score, finding_fingerprint
 from .models import AIReview, Finding, ReviewReport
@@ -27,11 +29,12 @@ class PullRequestReviewDiff:
     new_findings: list[Finding]
     existing_findings: list[Finding]
     resolved_findings: list[Finding]
+    changed_files: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "repo_name": self.current_report.repo_name,
-            "health_score": calculate_health_score(self.current_report.findings),
+            "health_score": calculate_health_score(effective_findings(self.current_report)),
             "baseline": self.baseline_report.repo_name if self.baseline_report else None,
             "new_findings_count": len(self.new_findings),
             "existing_findings_count": len(self.existing_findings),
@@ -42,8 +45,12 @@ class PullRequestReviewDiff:
 def build_pr_review_diff(
     current_report: ReviewReport,
     baseline_report: ReviewReport | None = None,
+    *,
+    changed_files: list[dict[str, Any]] | None = None,
 ) -> PullRequestReviewDiff:
-    current_actionable = _actionable_findings(current_report.findings)
+    current_actionable = _incremental_findings(
+        _actionable_findings(effective_findings(current_report)), changed_files
+    )
     if baseline_report is None:
         return PullRequestReviewDiff(
             current_report=current_report,
@@ -51,11 +58,18 @@ def build_pr_review_diff(
             new_findings=current_actionable,
             existing_findings=[],
             resolved_findings=[],
+            changed_files=changed_files,
         )
 
-    baseline_actionable = _actionable_findings(baseline_report.findings)
-    current_by_fingerprint = {finding_fingerprint(finding): finding for finding in current_actionable}
-    baseline_by_fingerprint = {finding_fingerprint(finding): finding for finding in baseline_actionable}
+    baseline_actionable = _incremental_findings(
+        _actionable_findings(effective_findings(baseline_report)), changed_files, baseline=True
+    )
+    current_by_fingerprint = {
+        finding_fingerprint(finding): finding for finding in current_actionable
+    }
+    baseline_by_fingerprint = {
+        finding_fingerprint(finding): finding for finding in baseline_actionable
+    }
 
     new_findings = [
         finding
@@ -78,12 +92,139 @@ def build_pr_review_diff(
         new_findings=new_findings,
         existing_findings=existing_findings,
         resolved_findings=resolved_findings,
+        changed_files=changed_files,
     )
 
 
-def build_pr_bot_comment(review_diff: PullRequestReviewDiff, *, fail_on_severity: str | None = None) -> str:
+def changed_line_ranges(files: list[dict[str, Any]]) -> dict[str, list[tuple[int, int]]]:
+    """Return added head lines only from complete unified-diff hunks."""
+    result = {}
+    for file in files:
+        path = file.get("filename")
+        if not isinstance(path, str):
+            continue
+        result[path] = []
+        patch = file.get("patch")
+        if file.get("status") == "removed" or not isinstance(patch, str):
+            continue
+        added = []
+        hunk_lines = []
+        expected_old = expected_new = None
+        line_number = 0
+        old_count = new_count = 0
+        valid = True
+        for line in patch.splitlines():
+            hunk = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+            if hunk:
+                if expected_old is not None:
+                    valid &= (old_count, new_count) == (expected_old, expected_new)
+                    added.extend(hunk_lines)
+                expected_old = int(hunk.group(2)) if hunk.group(2) is not None else 1
+                expected_new = int(hunk.group(4)) if hunk.group(4) is not None else 1
+                line_number = int(hunk.group(3))
+                old_count = new_count = 0
+                hunk_lines = []
+            elif expected_old is not None:
+                if line.startswith("+"):
+                    hunk_lines.append(line_number)
+                    new_count += 1
+                    line_number += 1
+                elif line.startswith("-"):
+                    old_count += 1
+                elif line.startswith(" "):
+                    old_count += 1
+                    new_count += 1
+                    line_number += 1
+                elif line != "\\ No newline at end of file":
+                    valid = False
+        if expected_old is None:
+            continue
+        valid &= (old_count, new_count) == (expected_old, expected_new)
+        added.extend(hunk_lines)
+        if not valid or any(number < 1 for number in added):
+            continue
+        ranges = []
+        for number in sorted(set(added)):
+            if ranges and ranges[-1][1] == number - 1:
+                ranges[-1] = (ranges[-1][0], number)
+            else:
+                ranges.append((number, number))
+        result[path] = ranges
+    return result
+
+
+def _incremental_findings(
+    findings: list[Finding], files: list[dict[str, Any]] | None, *, baseline: bool = False
+) -> list[Finding]:
+    if files is None:
+        return findings
+    changed = {
+        file.get("filename") for file in files if baseline or file.get("status") != "removed"
+    }
+    renames = {
+        file["previous_filename"]: file["filename"]
+        for file in files
+        if file.get("status") == "renamed" and isinstance(file.get("previous_filename"), str)
+    }
+    scoped = []
+    for finding in findings:
+        if baseline and renames:
+            paths = [renames.get(path, path) for path in finding.evidence_paths]
+            path = renames.get(finding.path, finding.path)
+            if paths != finding.evidence_paths or path != finding.path:
+                finding = replace(finding, evidence_paths=paths, path=path, fingerprint=None)
+        locations = set(finding.evidence_paths)
+        if finding.path:
+            locations.add(finding.path)
+        # Rules without a location can apply to repository-wide configuration.
+        if not locations or changed.intersection(locations):
+            scoped.append(finding)
+    return scoped
+
+
+def build_pr_annotations(
+    report: ReviewReport, changed_files: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    ranges = changed_line_ranges(changed_files)
+    annotations = []
+    for finding in effective_findings(report):
+        if (
+            not finding.path
+            or not finding.start_line
+            or not finding.end_line
+            or finding.start_line < 1
+            or finding.end_line < finding.start_line
+        ):
+            continue
+        for start, end in ranges.get(finding.path, []):
+            start = max(start, finding.start_line)
+            end = min(end, finding.end_line)
+            if start > end:
+                continue
+            annotations.append(
+                {
+                    "path": finding.path,
+                    "start_line": start,
+                    "end_line": end,
+                    "annotation_level": {
+                        "high": "failure",
+                        "medium": "warning",
+                        "low": "warning",
+                    }.get(finding.severity, "notice"),
+                    "title": finding.title[:255],
+                    "message": (finding.recommendation + "\n\n" + "\n".join(finding.evidence))[
+                        :65535
+                    ],
+                }
+            )
+    return annotations
+
+
+def build_pr_bot_comment(
+    review_diff: PullRequestReviewDiff, *, fail_on_severity: str | None = None
+) -> str:
     current_report = review_diff.current_report
-    health_score = calculate_health_score(current_report.findings)
+    health_score = calculate_health_score(effective_findings(current_report))
     lines = [
         PR_BOT_COMMENT_MARKER,
         "## Repository Review Agent",
@@ -128,11 +269,16 @@ def blocking_findings(
     if not fail_on_severity:
         return []
     threshold = SEVERITY_RANK[fail_on_severity]
-    candidates = review_diff.new_findings if scope == "new" else _actionable_findings(review_diff.current_report.findings)
+    candidates = (
+        review_diff.new_findings
+        if scope == "new"
+        else _incremental_findings(
+            _actionable_findings(effective_findings(review_diff.current_report)),
+            review_diff.changed_files,
+        )
+    )
     return [
-        finding
-        for finding in candidates
-        if SEVERITY_RANK.get(finding.severity, 0) >= threshold
+        finding for finding in candidates if SEVERITY_RANK.get(finding.severity, 0) >= threshold
     ]
 
 
@@ -146,10 +292,49 @@ def run_pr_bot(
     github_token: str | None = None,
     fail_on_severity: str | None = None,
     block_scope: str = "new",
+    changed_files_json: Path | None = None,
+    annotation_mode: str = "none",
+    head_sha: str | None = None,
 ) -> dict[str, Any]:
     current_report = load_report_json(report_json)
     baseline_report = load_report_json(baseline_json) if baseline_json else None
-    review_diff = build_pr_review_diff(current_report, baseline_report)
+    changed_files = None
+    if changed_files_json:
+        try:
+            changed_files = json.loads(changed_files_json.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise GitHubIntegrationError(f"Changed files JSON could not be read: {exc}") from exc
+        if not isinstance(changed_files, list) or not all(
+            isinstance(item, dict)
+            and isinstance(item.get("filename"), str)
+            and bool(item["filename"])
+            and (item.get("patch") is None or isinstance(item["patch"], str))
+            for item in changed_files
+        ):
+            raise GitHubIntegrationError(
+                "Changed files JSON must be an array of GitHub file objects."
+            )
+    if annotation_mode not in {"none", "dry-run", "create"}:
+        raise GitHubIntegrationError("Unsupported annotation mode.")
+    if annotation_mode != "none" and changed_files is None:
+        raise GitHubIntegrationError("--changed-files-json is required for line annotations.")
+    if annotation_mode == "create" and (not github_repo or not head_sha):
+        raise GitHubIntegrationError(
+            "--github-repo and --head-sha are required for annotation create mode."
+        )
+    if annotation_mode == "create":
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", head_sha or ""):
+            raise GitHubIntegrationError("--head-sha must be an exact 40-character commit SHA.")
+        if current_report.metrics.get("source_dirty"):
+            raise GitHubIntegrationError(
+                "Report source is dirty; generate a report from the exact clean head commit."
+            )
+        source_sha = current_report.metrics.get("source_commit_sha")
+        if source_sha is not None and str(source_sha).lower() != head_sha.lower():
+            raise GitHubIntegrationError(
+                "Report source commit does not match --head-sha; regenerate the report."
+            )
+    review_diff = build_pr_review_diff(current_report, baseline_report, changed_files=changed_files)
     comment_body = build_pr_bot_comment(review_diff, fail_on_severity=fail_on_severity)
 
     result: dict[str, Any] = {
@@ -196,6 +381,18 @@ def run_pr_bot(
             }
             for finding in failures
         ]
+    if annotation_mode != "none":
+        annotations = build_pr_annotations(current_report, changed_files)
+        result["annotations"] = annotations
+        if annotation_mode == "create":
+            response = GitHubClient(token=github_token).create_annotated_check(
+                github_repo,
+                head_sha=head_sha,
+                annotations=annotations,
+                summary=comment_body,
+                conclusion="failure" if failures else "success",
+            )
+            result["check_url"] = response.get("html_url")
     return result
 
 
@@ -211,6 +408,19 @@ def load_report_json(path: Path | None) -> ReviewReport:
             evidence=list(item.get("evidence") or []),
             recommendation=item["recommendation"],
             evidence_paths=list(item.get("evidence_paths") or []),
+            **{
+                key: item[key]
+                for key in (
+                    "source",
+                    "rule_id",
+                    "path",
+                    "start_line",
+                    "end_line",
+                    "confidence",
+                    "fingerprint",
+                )
+                if key in item
+            },
         )
         for item in data.get("findings", [])
     ]
@@ -224,6 +434,7 @@ def load_report_json(path: Path | None) -> ReviewReport:
             summary=ai_review_data.get("summary", ""),
             error=ai_review_data.get("error"),
             sections=ai_review_data.get("sections"),
+            findings=list(ai_review_data.get("findings") or []),
         )
 
     return ReviewReport(
@@ -234,6 +445,7 @@ def load_report_json(path: Path | None) -> ReviewReport:
         framework_signals=dict(data.get("framework_signals") or {}),
         findings=findings,
         ai_review=ai_review,
+        finding_feedback=list(data.get("finding_feedback") or []),
     )
 
 
@@ -251,6 +463,9 @@ def main(argv: list[str] | None = None) -> int:
             github_token=args.github_token,
             fail_on_severity=fail_on_severity,
             block_scope=args.block_scope,
+            changed_files_json=args.changed_files_json,
+            annotation_mode=args.annotation_mode,
+            head_sha=args.head_sha,
         )
     except GitHubIntegrationError as exc:
         raise SystemExit(str(exc)) from exc
@@ -266,7 +481,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="repo-review-pr-bot",
         description="Compare repository review reports, comment on PRs, and fail CI on risk thresholds.",
     )
-    parser.add_argument("--report-json", type=Path, required=True, help="Current review JSON report.")
+    parser.add_argument(
+        "--report-json", type=Path, required=True, help="Current review JSON report."
+    )
     parser.add_argument("--baseline-json", type=Path, help="Baseline JSON report for comparison.")
     parser.add_argument("--github-repo", help="GitHub repository slug, for example owner/repo.")
     parser.add_argument("--pr-number", type=int, help="Pull request number to comment on.")
@@ -289,6 +506,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="new",
         help="Apply the CI gate to only new findings or to all current findings.",
     )
+    parser.add_argument(
+        "--changed-files-json",
+        type=Path,
+        help="GitHub PR files API JSON array for incremental findings.",
+    )
+    parser.add_argument("--annotation-mode", choices=["none", "dry-run", "create"], default="none")
+    parser.add_argument("--head-sha", help="Exact PR head commit for Checks annotations.")
     return parser
 
 

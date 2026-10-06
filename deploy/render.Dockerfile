@@ -16,7 +16,7 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 
-RUN python -m pip install --no-cache-dir ".[web]"
+RUN python -m pip install --no-cache-dir ".[all]"
 
 USER app
 

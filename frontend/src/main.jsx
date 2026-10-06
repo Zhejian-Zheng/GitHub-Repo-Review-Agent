@@ -33,20 +33,27 @@ import {
 } from "./authClient";
 import { DEFAULT_TARGET, MODEL_OPTIONS, progressCopy } from "./config";
 import { buildDemoReport } from "./demoReport";
-import { fetchProjectDetail, fetchRepositories } from "./historyClient";
+import { fetchProjectDetail, fetchRepositories, saveFindingFeedback } from "./historyClient";
 import { renderStaticMarkdown } from "./reportMarkdown";
 import { reportCopy } from "./reportCopy";
-import { submitReviewJob, waitForReviewJob } from "./reviewJobsClient";
+import { submitReviewJob, waitForReviewJob, cancelReviewJob, askReportQuestion } from "./reviewJobsClient";
 import "./styles.css";
 
+function storedPendingJob() {
+  try { return JSON.parse(sessionStorage.getItem("repo-review-pending-job") || "null"); }
+  catch { return null; }
+}
+
 function App() {
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => storedPendingJob()?.form || ({
     target: DEFAULT_TARGET,
     mode: "agent",
     ai_provider: "openrouter",
     ai_model: "openrouter/auto",
-    report_language: "zh-CN"
-  });
+    report_language: "zh-CN",
+    ai_token_budget: 20000,
+    vulnerability_scan: false
+  }));
   const [status, setStatus] = useState("Ready");
   const [isRunning, setIsRunning] = useState(false);
   const [markdown, setMarkdown] = useState("");
@@ -62,6 +69,16 @@ function App() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const reportRef = useRef(null);
+  const reviewController = useRef(null);
+  const [reportJobId, setReportJobId] = useState(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [pendingJob, setPendingJob] = useState(storedPendingJob);
+  const rememberJob = (job) => {
+    setPendingJob(job);
+    if (job) sessionStorage.setItem("repo-review-pending-job", JSON.stringify(job));
+    else sessionStorage.removeItem("repo-review-pending-job");
+  };
+  useEffect(() => () => reviewController.current?.abort(), []);
 
   const selectedModelValue = useMemo(() => {
     const option = MODEL_OPTIONS.find(
@@ -126,14 +143,6 @@ function App() {
       isMounted = false;
     };
   }, [authSession?.access_token]);
-
-  useEffect(() => {
-    if (!isRunning) return undefined;
-    const interval = window.setInterval(() => {
-      setProgressStep((current) => Math.min(current + 1, runPhases.length - 1));
-    }, 1600);
-    return () => window.clearInterval(interval);
-  }, [isRunning, runPhases.length]);
 
   useEffect(() => {
     if (!isRunning) return undefined;
@@ -205,6 +214,8 @@ function App() {
   };
 
   const handleSignOut = async () => {
+    reviewController.current?.abort();
+    rememberJob(null);
     try {
       await signOut(authSession?.access_token);
     } finally {
@@ -217,10 +228,10 @@ function App() {
     }
   };
 
-  const ensureFreshSession = async (session = authSession) => {
+  const ensureFreshSession = async (session = authSession, options = {}) => {
     if (!session?.access_token) return null;
     try {
-      const nextSession = await getValidSession(session);
+      const nextSession = await getValidSession(session, options);
       if (!nextSession?.access_token) {
         setAuthSession(null);
         setRepositories([]);
@@ -238,6 +249,7 @@ function App() {
       }
       return nextSession;
     } catch (error) {
+      if (options.signal?.aborted) return null;
       clearStoredSession();
       setAuthSession(null);
       setRepositories([]);
@@ -295,16 +307,25 @@ function App() {
     }
   };
 
-  const runReview = async (event) => {
+  const runReview = async (event, resume = false) => {
     event.preventDefault();
+    reviewController.current?.abort();
+    const controller = new AbortController();
+    reviewController.current = controller;
     setIsRunning(true);
     setProgressStep(0);
     setElapsedSeconds(0);
     setStatus(isChinese ? "评审已开始，正在连接后端..." : "Review started. Connecting to backend...");
     setMarkdown("");
     setReport(null);
+    setReportJobId(null);
     const hadSession = Boolean(authSession?.access_token);
-    const session = await ensureFreshSession();
+    const session = await ensureFreshSession(authSession, { signal: controller.signal });
+    if (controller.signal.aborted) {
+      setIsRunning(false);
+      setStatus(isChinese ? "已停止跟踪。" : "Tracking stopped.");
+      return;
+    }
     if (hadSession && !session?.access_token) {
       setIsRunning(false);
       setStatus(isChinese ? "登录已过期，请重新登录后再保存历史。" : "Session expired. Sign in again to save history.");
@@ -319,14 +340,29 @@ function App() {
     };
 
     try {
-      const job = await submitReviewJob(payload, session?.access_token);
+      const job = resume && pendingJob
+        ? { job_id: pendingJob.id }
+        : await submitReviewJob(payload, session?.access_token, { signal: controller.signal });
+      rememberJob({ id: job.job_id, userId: session?.user?.id || null, form });
+      let pollingSession = session;
       setStatus(
         isChinese
           ? `扫描任务已提交：${job.job_id.slice(0, 8)}。正在排队...`
           : `Review job ${job.job_id.slice(0, 8)} submitted. Waiting for a worker...`
       );
       const data = await waitForReviewJob(job.job_id, session?.access_token, {
+        signal: controller.signal,
+        getAccessToken: async (signal) => {
+          if (!pollingSession) return undefined;
+          pollingSession = await getValidSession(pollingSession, { signal });
+          if (!pollingSession?.access_token) throw new Error("Session expired. Sign in again to resume tracking.");
+          if (!controller.signal.aborted) setAuthSession(pollingSession);
+          return pollingSession.access_token;
+        },
         onUpdate: (nextJob) => {
+          const index = runPhases.findIndex((phase) => phase.key === nextJob.phase);
+          if (index >= 0) setProgressStep(index);
+          if (["completed", "failed", "cancelled"].includes(nextJob.status)) rememberJob(null);
           const shortId = nextJob.job_id.slice(0, 8);
           setStatus(
             isChinese
@@ -336,6 +372,7 @@ function App() {
         }
       });
 
+      setReportJobId(job.job_id);
       setMarkdown(data.markdown || "");
       setReport(data.report || null);
       setStatus(
@@ -358,10 +395,47 @@ function App() {
             ? "游客模式可以查看 Demo。当前后端要求登录后才能运行真实扫描。"
             : "Guest mode can view the demo. This backend requires sign-in for live reviews."
           : error.message;
-      setStatus(`Review failed: ${guestMessage}`);
+      setStatus(error.name === "AbortError"
+        ? (isChinese ? "已停止跟踪；后台任务可能仍在运行，可恢复跟踪。" : "Tracking stopped. The backend job may still be running; you can resume tracking.")
+        : `Review failed: ${guestMessage}`);
     } finally {
       setIsRunning(false);
     }
+  };
+
+  const cancelReview = async () => {
+    if (!pendingJob || isCancelling) return;
+    setIsCancelling(true);
+    try {
+      const session = await ensureFreshSession();
+      if (!session?.access_token) throw new Error("Sign in to cancel your review.");
+      const job = await cancelReviewJob(pendingJob.id, session.access_token);
+      if (job.status === "cancelled") {
+        reviewController.current?.abort();
+        rememberJob(null);
+        setIsRunning(false);
+        // The aborted tracker settles first; show the server's confirmed result.
+        setTimeout(() => setStatus(isChinese ? "评审已取消。" : "Review cancelled."), 0);
+      } else {
+        setStatus(`Review ${job.status}.`);
+      }
+    } catch (error) {
+      setStatus(error.message);
+    } finally { setIsCancelling(false); }
+  };
+
+  const updateFeedback = async (finding, payload) => {
+    const session = await ensureFreshSession();
+    if (!session?.access_token || !selectedRepository) throw new Error("Sign in before saving a decision.");
+    await saveFindingFeedback(selectedRepository.id, finding.fingerprint, payload, session.access_token);
+    setProjectDetail(await fetchProjectDetail(selectedRepository.id, session.access_token));
+  };
+
+  const askQuestion = async (question) => {
+    const session = await ensureFreshSession();
+    return askReportQuestion({ ...(reportJobId ? { job_id: reportJobId } : { report }), question,
+      provider: form.ai_provider, model: form.ai_model || null, language: form.report_language,
+      token_budget: Math.min(20000, Number(form.ai_token_budget || 20000)) }, session?.access_token);
   };
 
   const authErrorMessage = (message) => friendlyAuthError(message, isChinese);
@@ -394,6 +468,7 @@ function App() {
   };
 
   const loadDemoReport = () => {
+    setReportJobId(null);
     const demoReport = buildDemoReport(form.report_language);
     setReport(demoReport);
     setMarkdown(renderStaticMarkdown(demoReport, form.report_language));
@@ -519,6 +594,18 @@ function App() {
             </button>
           </div>
 
+          <div className="review-options">
+            <label>{isChinese ? "AI Token 上限" : "AI token budget"}
+              <input aria-label="AI token budget" type="number" min="256" max="200000" step="1"
+                value={form.ai_token_budget || 20000} disabled={isRunning}
+                onChange={event => setForm(current => ({ ...current, ai_token_budget: Number(event.target.value) }))} />
+            </label>
+            <label><input type="checkbox" checked={Boolean(form.vulnerability_scan)} disabled={isRunning}
+              onChange={event => setForm(current => ({ ...current, vulnerability_scan: event.target.checked }))} />
+              {isChinese ? "依赖漏洞扫描" : "Scan dependency vulnerabilities"}
+            </label>
+          </div>
+
           {isRunning ? (
             <RunProgress
               phases={runPhases}
@@ -529,6 +616,20 @@ function App() {
           ) : null}
 
           <div className="home-actions">
+            {isRunning ? (
+              <button className="demo-button" type="button" onClick={() => reviewController.current?.abort()}>
+                {isChinese ? "停止跟踪" : "Stop tracking"}
+              </button>
+            ) : pendingJob && pendingJob.userId === (authSession?.user?.id || null) ? (
+              <button className="demo-button" type="button" onClick={(event) => runReview(event, true)}>
+                {isChinese ? "恢复任务跟踪" : "Resume tracking"}
+              </button>
+            ) : null}
+            {pendingJob && authSession?.access_token && pendingJob.userId === authSession?.user?.id ? (
+              <button className="demo-button" type="button" disabled={isCancelling} onClick={cancelReview}>
+                {isChinese ? "取消评审" : "Cancel review"}
+              </button>
+            ) : null}
             <button className="demo-button" type="button" onClick={loadDemoReport}>
               <FileText size={17} aria-hidden="true" />
               Demo
@@ -564,6 +665,7 @@ function App() {
           error={historyError}
           language={form.report_language}
           onOpenProject={openProjectDetail}
+          onFeedback={updateFeedback}
           onRefresh={() => loadProjectList(authSession.access_token)}
         />
       ) : null}
@@ -579,6 +681,7 @@ function App() {
             onDownload={downloadReport}
             onClose={closeReport}
           />
+          {report ? <ReportQuestionForm language={form.report_language} onAsk={askQuestion} provider={form.ai_provider} /> : null}
         </div>
       ) : null}
     </main>
@@ -906,6 +1009,7 @@ function ProjectHistoryWorkspace({
   error,
   language,
   onOpenProject,
+  onFeedback,
   onRefresh
 }) {
   const isChinese = language === "zh-CN";
@@ -987,7 +1091,7 @@ function ProjectHistoryWorkspace({
           ) : (
             <>
               <div className="project-summary-grid">
-                <MetricTile label={copy.recentScore} value={latestRun?.health_score ?? "--"} />
+                <MetricTile label={copy.recentScore} value={detail?.effective_health_score ?? latestRun?.health_score ?? "--"} />
                 <MetricTile label={copy.newFindings} value={latestRun?.new_findings_count ?? 0} />
                 <MetricTile label={copy.existingFindings} value={latestRun?.existing_findings_count ?? 0} />
                 <MetricTile label={copy.resolvedFindings} value={latestRun?.resolved_findings_count ?? 0} />
@@ -1020,7 +1124,7 @@ function ProjectHistoryWorkspace({
                 {topRisks.length ? (
                   <div className="project-risk-list">
                     {topRisks.slice(0, 5).map((finding) => (
-                      <HistoryFindingCard key={finding.fingerprint} finding={finding} />
+                      <HistoryFindingCard key={finding.fingerprint} finding={finding} onFeedback={onFeedback} language={language} />
                     ))}
                   </div>
                 ) : (
@@ -1118,13 +1222,14 @@ function ScoreTrend({ runs, emptyText }) {
   );
 }
 
-function HistoryFindingCard({ finding }) {
+function HistoryFindingCard({ finding, onFeedback, language }) {
   const severity = (finding.severity || "info").toLowerCase();
   return (
     <article className="history-finding-card">
       <div>
         <h4>{finding.title}</h4>
         <p>{finding.recommendation}</p>
+        {onFeedback ? <FindingFeedbackForm finding={finding} language={language} onSave={payload => onFeedback(finding, payload)} /> : null}
         {(finding.evidence_paths_json ?? []).length ? (
           <small>{finding.evidence_paths_json.slice(0, 3).join(", ")}</small>
         ) : null}
@@ -1132,6 +1237,64 @@ function HistoryFindingCard({ finding }) {
       <Badge tone={severity}>{severity}</Badge>
     </article>
   );
+}
+
+function FindingFeedbackForm({ finding, onSave, language }) {
+  const chinese = language === "zh-CN";
+  const [decision, setDecision] = useState(finding.feedback?.status || "confirmed");
+  const [reason, setReason] = useState(finding.feedback?.reason || "");
+  const [expiry, setExpiry] = useState(finding.feedback?.expires_at?.slice(0, 10) || "");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const save = async event => {
+    event.preventDefault(); setBusy(true); setMessage("");
+    try {
+      await onSave({ status: decision, reason, expires_at: expiry ? new Date(`${expiry}T23:59:59Z`).toISOString() : null });
+      setMessage(chinese ? "已保存" : "Decision saved.");
+    } catch (error) { setMessage(error.message); }
+    finally { setBusy(false); }
+  };
+  return <form className="finding-feedback" onSubmit={save}>
+    <label>{chinese ? "处理决定" : "Finding decision"}<select aria-label="Finding decision" value={decision} onChange={event => setDecision(event.target.value)}>
+      <option value="confirmed">{chinese ? "确认问题" : "Confirmed"}</option>
+      <option value="false_positive">{chinese ? "误报" : "False positive"}</option>
+      <option value="ignored">{chinese ? "忽略" : "Ignored"}</option>
+    </select></label>
+    <label>{chinese ? "原因" : "Reason"}<input aria-label="Feedback reason" maxLength={2000} value={reason} onChange={event => setReason(event.target.value)} /></label>
+    <label>{chinese ? "到期日期（可选）" : "Expiry (optional)"}<input aria-label="Feedback expiry" type="date" value={expiry} onChange={event => setExpiry(event.target.value)} /></label>
+    <button type="submit" disabled={busy}>{chinese ? "保存决定" : "Save decision"}</button>
+    <small role="status">{message}</small>
+  </form>;
+}
+
+function ReportQuestionForm({ language, onAsk, provider }) {
+  const chinese = language === "zh-CN";
+  const [question, setQuestion] = useState("");
+  const [response, setResponse] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async event => {
+    event.preventDefault(); setBusy(true); setError(""); setResponse(null);
+    try { setResponse(await onAsk(question)); }
+    catch (failure) { setError(failure.message); }
+    finally { setBusy(false); }
+  };
+  return <section className="report-questions">
+    <h3>{chinese ? "询问这份报告" : "Ask about this report"}</h3>
+    <p>{chinese ? "使用所选模型" : "Uses selected provider"}: {provider}</p>
+    <form onSubmit={submit}><label>{chinese ? "问题" : "Question"}
+      <textarea aria-label="Report question" required maxLength={2000} value={question} onChange={event => setQuestion(event.target.value)} />
+    </label><button type="submit" disabled={busy || !question.trim()}>{chinese ? "询问报告" : "Ask about report"}</button></form>
+    {error ? <p role="alert">{error}</p> : null}
+    {response ? <div className="report-question-answer" role="status">
+      <p>{response.answer}</p>
+      {(response.citations || []).map((citation, index) => <blockquote key={index}>
+        <code>{citation.path}{citation.start_line ? `:${citation.start_line}–${citation.end_line || citation.start_line}` : ""}</code>
+        <pre>{citation.evidence}</pre>
+      </blockquote>)}
+      {(response.limitations || []).map((limitation, index) => <p key={index}>{limitation}</p>)}
+    </div> : null}
+  </section>;
 }
 
 function scoreTone(score) {
@@ -1145,7 +1308,8 @@ function translateJobStatus(status, isChinese) {
     queued: isChinese ? "排队中" : "queued",
     running: isChinese ? "扫描中" : "running",
     completed: isChinese ? "已完成" : "completed",
-    failed: isChinese ? "失败" : "failed"
+    failed: isChinese ? "失败" : "failed",
+    cancelled: isChinese ? "已取消" : "cancelled"
   };
   return labels[status] || status;
 }

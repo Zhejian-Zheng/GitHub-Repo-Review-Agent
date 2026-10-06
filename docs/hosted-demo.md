@@ -109,3 +109,7 @@ https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/
 ## Demo Account
 
 The safest public setup is self-service Supabase email/password sign-up plus the built-in `Demo` button. If you want a shared test account for portfolio reviewers, create it in Supabase Auth and share it outside the repository. Do not commit test credentials.
+
+## LangChain provider dependencies
+
+The application uses LangChain 1.x and LangGraph 1.x. Both Docker images install the `all` extra, including OpenAI/OpenRouter, Anthropic and Ollama integrations. For a manual deployment install `python -m pip install -e ".[web,openai]"` or `.[all]` before enabling a provider. Rules-only runs still work without model credentials. Agent mode requires a model that supports tools; provider failures appear in the AI status while the baseline report remains available.

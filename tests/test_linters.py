@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from repo_review_agent.linters import (
+    LinterUnavailable,
     _finding_for_code,
     _first_message,
     _relative_filename,
@@ -44,9 +45,9 @@ def _fake_ruff(diagnostics):
 
 
 class RuffFindingsTests(unittest.TestCase):
-    def test_returns_empty_when_ruff_missing(self) -> None:
+    def test_reports_unavailable_when_ruff_missing(self) -> None:
         with patch("repo_review_agent.linters.shutil.which", return_value=None):
-            self.assertEqual(ruff_findings(Path(".")), [])
+            self.assertEqual(ruff_findings(Path("."))[0].rule_id, "tool.ruff.unavailable")
 
     def test_normalizes_and_orders_by_severity(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -110,18 +111,18 @@ class RuffFindingsTests(unittest.TestCase):
         self.assertIn("Fix 7 Ruff F401", findings[0].title)
         self.assertTrue(any("more occurrence" in line for line in findings[0].evidence))
 
-    def test_invalid_or_empty_output_is_ignored(self) -> None:
+    def test_invalid_or_empty_output_is_reported(self) -> None:
         with patch("repo_review_agent.linters.shutil.which", return_value="/usr/bin/ruff"):
             with patch(
                 "repo_review_agent.linters.subprocess.run",
                 lambda *a, **k: SimpleNamespace(stdout="not json", returncode=0),
             ):
-                self.assertEqual(ruff_findings(Path(".")), [])
+                self.assertEqual(ruff_findings(Path("."))[0].rule_id, "tool.ruff.unavailable")
             with patch(
                 "repo_review_agent.linters.subprocess.run",
                 lambda *a, **k: SimpleNamespace(stdout="", returncode=0),
             ):
-                self.assertEqual(ruff_findings(Path(".")), [])
+                self.assertEqual(ruff_findings(Path("."))[0].rule_id, "tool.ruff.unavailable")
 
     def test_collect_skips_non_python_repositories(self) -> None:
         snapshot = RepositorySnapshot(
@@ -179,15 +180,16 @@ class RuffHelperTests(unittest.TestCase):
         self.assertEqual(_ruff_category("PERF401"), "performance")
         self.assertEqual(_ruff_category("E701"), "maintainability")
 
-    def test_run_ruff_swallows_subprocess_errors(self) -> None:
+    def test_run_ruff_reports_subprocess_errors(self) -> None:
         with patch("repo_review_agent.linters.shutil.which", return_value="/usr/bin/ruff"):
             with patch("repo_review_agent.linters.subprocess.run", side_effect=OSError):
-                self.assertEqual(_run_ruff(Path("."), timeout=1), [])
+                with self.assertRaises(LinterUnavailable):
+                    _run_ruff(Path("."), timeout=1)
             with patch(
                 "repo_review_agent.linters.subprocess.run",
                 side_effect=subprocess.TimeoutExpired("ruff", 1),
-            ):
-                self.assertEqual(_run_ruff(Path("."), timeout=1), [])
+            ), self.assertRaises(LinterUnavailable):
+                _run_ruff(Path("."), timeout=1)
 
     def test_relative_filename_edge_cases(self) -> None:
         with TemporaryDirectory() as tmp:

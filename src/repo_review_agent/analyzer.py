@@ -131,6 +131,7 @@ def analyze_snapshot(
         metrics={
             "files_scanned": len(snapshot.files),
             "files_skipped": snapshot.skipped_files,
+            "inventory_complete": snapshot.inventory_complete,
             "total_size_bytes": snapshot.total_size_bytes,
             "source_files": len(snapshot.source_files),
             "test_files": len(snapshot.test_files),
@@ -182,6 +183,9 @@ def build_overview(
         frameworks = ", ".join(sorted(framework_signals))
         overview.append(f"Framework and tooling signals: {frameworks}.")
 
+    if not snapshot.inventory_complete:
+        overview = [line for line in overview if not line.startswith("No ")]
+        overview.append("File inventory is incomplete; absence checks were not performed.")
     return overview
 
 
@@ -191,7 +195,7 @@ def detect_framework_signals(
 ) -> dict[str, list[str]]:
     signals: dict[str, list[str]] = {}
 
-    for rel_path in snapshot.dependency_files:
+    for rel_path in _sample_paths(snapshot, snapshot.dependency_files):
         text = read_text_file(root, rel_path).lower()
         if not text:
             continue
@@ -236,11 +240,13 @@ def build_findings(
     run_linters: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    file_paths = {file.path.lower() for file in snapshot.files}
+    inventory = snapshot.inventory_files if snapshot.inventory_files is not None else snapshot.files
+    file_paths = {file.path.lower() for file in inventory}
+    sampled_paths = {file.path.lower() for file in snapshot.files}
     dependency_paths = {path.lower() for path in snapshot.dependency_files}
     package_jsons_missing_lockfile = _package_jsons_missing_lockfile(dependency_paths, file_paths)
 
-    if "readme.md" not in file_paths:
+    if snapshot.inventory_complete and "readme.md" not in file_paths:
         findings.append(
             Finding(
                 title="Add a README with setup and usage instructions",
@@ -251,11 +257,11 @@ def build_findings(
                 evidence_paths=["README.md"],
             )
         )
-    else:
+    elif "readme.md" in sampled_paths:
         readme_findings = build_readme_quality_findings(root)
         findings.extend(readme_findings)
 
-    if not any(path in {"license", "license.md"} for path in file_paths):
+    if snapshot.inventory_complete and not any(path in {"license", "license.md"} for path in file_paths):
         findings.append(
             Finding(
                 title="Add an explicit open-source license",
@@ -267,7 +273,7 @@ def build_findings(
             )
         )
 
-    if ".gitignore" not in file_paths:
+    if snapshot.inventory_complete and ".gitignore" not in file_paths:
         findings.append(
             Finding(
                 title="Add a .gitignore file",
@@ -279,7 +285,7 @@ def build_findings(
             )
         )
 
-    if snapshot.source_files and not snapshot.test_files:
+    if snapshot.inventory_complete and snapshot.source_files and not snapshot.test_files:
         findings.append(
             Finding(
                 title="Add automated tests for the core behavior",
@@ -290,7 +296,7 @@ def build_findings(
                 evidence_paths=_first_paths(snapshot.source_files),
             )
         )
-    elif len(snapshot.source_files) >= 4 and snapshot.test_files:
+    elif snapshot.inventory_complete and len(snapshot.source_files) >= 4 and snapshot.test_files:
         test_ratio = len(snapshot.test_files) / len(snapshot.source_files)
         if test_ratio < 0.25:
             findings.append(
@@ -306,7 +312,7 @@ def build_findings(
                 )
             )
 
-    if snapshot.source_files and not snapshot.ci_files:
+    if snapshot.inventory_complete and snapshot.source_files and not snapshot.ci_files:
         findings.append(
             Finding(
                 title="Add a CI workflow",
@@ -321,7 +327,7 @@ def build_findings(
         ci_findings = build_ci_quality_findings(snapshot, root)
         findings.extend(ci_findings)
 
-    if snapshot.source_files and not snapshot.dependency_files:
+    if snapshot.inventory_complete and snapshot.source_files and not snapshot.dependency_files:
         findings.append(
             Finding(
                 title="Add a dependency manifest",
@@ -333,7 +339,7 @@ def build_findings(
             )
         )
 
-    if package_jsons_missing_lockfile:
+    if snapshot.inventory_complete and package_jsons_missing_lockfile:
         findings.append(
             Finding(
                 title="Commit a JavaScript package lockfile",
@@ -350,6 +356,14 @@ def build_findings(
 
     docker_findings = build_docker_quality_findings(snapshot, root)
     findings.extend(docker_findings)
+
+    if not snapshot.inventory_complete:
+        findings.append(Finding(
+            title="Review incomplete file inventory", severity="low",
+            category="analysis coverage",
+            evidence=["Some repository paths could not be enumerated or inspected."],
+            recommendation="Resolve filesystem access errors and scan again.",
+        ))
 
     if snapshot.skipped_files:
         findings.append(
@@ -404,7 +418,9 @@ def build_findings(
 
 
 def build_readme_quality_findings(root: Path) -> list[Finding]:
-    text = read_text_file(root, "README.md", limit=80_000)
+    text = read_text_file(root, "README.md", limit=80_001)
+    if not text or len(text) > 80_000:
+        return []
     normalized = text.lower()
     missing: list[str] = []
 
@@ -429,13 +445,16 @@ def build_readme_quality_findings(root: Path) -> list[Finding]:
 
 
 def build_ci_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
-    combined_ci = "\n".join(
-        read_text_file(root, ci_file, limit=80_000).lower()
-        for ci_file in snapshot.ci_files[:8]
+    sampled_ci = _sample_paths(snapshot, snapshot.ci_files)
+    ci_texts = [read_text_file(root, path, limit=80_001).lower() for path in sampled_ci]
+    complete_ci = (
+        snapshot.inventory_complete and len(sampled_ci) == len(snapshot.ci_files)
+        and all(text and len(text) <= 80_000 for text in ci_texts)
     )
+    combined_ci = "\n".join(ci_texts)
     findings: list[Finding] = []
 
-    if snapshot.source_files and not any(term in combined_ci for term in CI_TEST_TERMS):
+    if complete_ci and snapshot.source_files and not any(term in combined_ci for term in CI_TEST_TERMS):
         findings.append(
             Finding(
                 title="Run automated tests in CI",
@@ -448,7 +467,7 @@ def build_ci_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[
         )
 
     frontend_package_paths = _frontend_package_paths(snapshot)
-    if frontend_package_paths and not any(term in combined_ci for term in CI_BUILD_TERMS):
+    if complete_ci and frontend_package_paths and not any(term in combined_ci for term in CI_BUILD_TERMS):
         findings.append(
             Finding(
                 title="Build frontend assets in CI",
@@ -479,11 +498,25 @@ def build_ci_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[
 
 
 def build_dependency_quality_findings(snapshot: RepositorySnapshot, root: Path) -> list[Finding]:
+    malformed = []
+    for path in _sample_paths(snapshot, snapshot.dependency_files):
+        if Path(path).name == "package.json":
+            _, error = _load_package_json(root, path)
+            if error:
+                malformed.append(f"{path}: {error}")
+    findings = []
+    if malformed:
+        findings.append(Finding(
+            title="Repair malformed package.json", severity="medium",
+            category="dependency hygiene", evidence=malformed[:5],
+            recommendation="Use a JSON object with dependency sections mapping package names to version strings.",
+            evidence_paths=_paths_from_prefixed_evidence(malformed[:5]),
+        ))
     floating_dependencies = find_floating_dependency_versions(snapshot, root)
     if not floating_dependencies:
-        return []
+        return findings
 
-    return [
+    return findings + [
         Finding(
             title="Pin broad or floating dependency versions",
             severity="medium",
@@ -500,7 +533,9 @@ def build_docker_quality_findings(snapshot: RepositorySnapshot, root: Path) -> l
     dockerfiles = [file.path for file in snapshot.files if file.path.lower().endswith("dockerfile")]
 
     for dockerfile in dockerfiles[:3]:
-        text = read_text_file(root, dockerfile, limit=80_000)
+        text = read_text_file(root, dockerfile, limit=80_001)
+        if not text or len(text) > 80_000:
+            continue
         floating_base_images = find_floating_docker_base_images(text)
         if floating_base_images:
             findings.append(
@@ -531,7 +566,7 @@ def build_docker_quality_findings(snapshot: RepositorySnapshot, root: Path) -> l
 
 def find_floating_dependency_versions(snapshot: RepositorySnapshot, root: Path) -> list[str]:
     evidence: list[str] = []
-    for rel_path in snapshot.dependency_files:
+    for rel_path in _sample_paths(snapshot, snapshot.dependency_files):
         lower_name = Path(rel_path).name.lower()
         if lower_name == "package.json":
             evidence.extend(_floating_package_json_dependencies(root, rel_path))
@@ -544,7 +579,7 @@ def find_floating_dependency_versions(snapshot: RepositorySnapshot, root: Path) 
 
 def find_risky_ci_permissions(snapshot: RepositorySnapshot, root: Path) -> list[str]:
     risky_paths: list[str] = []
-    for ci_file in snapshot.ci_files:
+    for ci_file in _sample_paths(snapshot, snapshot.ci_files):
         if not ci_file.lower().startswith(".github/workflows/"):
             continue
         text = read_text_file(root, ci_file, limit=80_000)
@@ -598,10 +633,8 @@ def _looks_like_secret_placeholder(match_text: str) -> bool:
 
 
 def _floating_package_json_dependencies(root: Path, rel_path: str) -> list[str]:
-    text = read_text_file(root, rel_path, limit=80_000)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+    data, error = _load_package_json(root, rel_path)
+    if data is None or error:
         return []
 
     evidence: list[str] = []
@@ -752,16 +785,17 @@ def _dockerfile_sets_non_root_user(text: str) -> bool:
 
 
 def _detect_package_json(signals: dict[str, list[str]], root: Path, rel_path: str) -> None:
-    text = read_text_file(root, rel_path)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        signals.setdefault("JavaScript tooling", []).append(f"{rel_path} could not be parsed")
+    data, error = _load_package_json(root, rel_path)
+    if error:
+        signals.setdefault("JavaScript tooling", []).append(f"{rel_path} could not be parsed: {error}")
+    if data is None:
         return
 
     deps = {}
     for key in ("dependencies", "devDependencies", "peerDependencies"):
-        deps.update(data.get(key, {}))
+        section = data.get(key, {})
+        if isinstance(section, dict):
+            deps.update(section)
 
     package_terms = {
         "React": ["react"],
@@ -793,3 +827,28 @@ def _detect_by_terms(
         matched = [term for term in terms if term in text]
         if matched:
             signals.setdefault(label, []).append(f"{rel_path}: {', '.join(matched)}")
+
+
+def _sample_paths(snapshot: RepositorySnapshot, paths: list[str]) -> list[str]:
+    sampled = {file.path for file in snapshot.files}
+    return [path for path in paths if path in sampled]
+
+
+def _load_package_json(root: Path, path: str) -> tuple[dict | None, str | None]:
+    text = read_text_file(root, path, limit=80_001)
+    # A truncated or unreadable manifest is unknown, not malformed.
+    if not text or len(text) > 80_000:
+        return None, None
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        return None, "invalid JSON"
+    if not isinstance(data, dict):
+        return None, "the manifest must be a JSON object"
+    for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        if key not in data:
+            continue
+        section = data[key]
+        if not isinstance(section, dict) or any(not isinstance(value, str) for value in section.values()):
+            return data, f"{key} must map package names to version strings"
+    return data, None

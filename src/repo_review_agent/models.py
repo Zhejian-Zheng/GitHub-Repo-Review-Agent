@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .redaction import redact_data
+
 
 @dataclass(frozen=True)
 class RepoFile:
@@ -28,6 +30,10 @@ class RepositorySnapshot:
     total_size_bytes: int
     skipped_files: int
     skipped_file_paths: list[str] = field(default_factory=list)
+    # Inventory includes oversized and unsampled files; files is the content sample.
+    # None supports snapshots constructed by older callers.
+    inventory_files: list[RepoFile] | None = None
+    inventory_complete: bool = True
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,13 @@ class Finding:
     evidence: list[str]
     recommendation: str
     evidence_paths: list[str] = field(default_factory=list)
+    source: str = "rule"
+    rule_id: str | None = None
+    path: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    confidence: float | None = None
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,7 @@ class AIReview:
     summary: str
     error: str | None = None
     sections: dict[str, list[str]] | None = None
+    findings: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -69,5 +83,13 @@ class ReviewReport:
     ai_review: AIReview | None = None
     agent_trace: list[AgentStep] | None = None
 
+    finding_feedback: list[dict[str, Any]] = field(default_factory=list)
+    raw_findings: list[Finding] = field(default_factory=list)
+    policy_decisions: list[dict[str, Any]] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        from .findings import review_findings
+
+        result = asdict(self)
+        result["findings"] = [asdict(item) for item in review_findings(self)]
+        return redact_data(result)

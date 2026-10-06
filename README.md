@@ -14,6 +14,7 @@
 ![Tests](https://img.shields.io/badge/tests-unittest-2E7D32?logo=checkmarx&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=111111)
 ![Coverage](https://img.shields.io/badge/coverage%20target-95%25-2E7D32)
+![LangChain](https://img.shields.io/badge/LangChain-1.x-1C3C3C)
 ![OpenAI](https://img.shields.io/badge/OpenAI-optional-412991?logo=openai&logoColor=white)
 ![OpenRouter](https://img.shields.io/badge/OpenRouter-optional-111111)
 ![MCP](https://img.shields.io/badge/MCP-server-5B5FC7)
@@ -21,7 +22,7 @@
 
 Put in a repository. Get back a structured engineering review.
 
-GitHub Repo Review Agent is a lightweight developer tool that turns a local repository or public GitHub URL into an architecture summary, project health report, and actionable issue backlog. It combines deterministic repository analysis with an optional AI synthesis layer, so the core review still works without an LLM API key.
+GitHub Repo Review Agent is a lightweight developer tool that turns a local repository or public GitHub URL into an architecture summary, project health report, and actionable issue backlog. It uses LangChain agents and a LangGraph preparation workflow to combine deterministic repository analysis with optional model-driven review, so the core review still works without an LLM API key.
 
 The product is designed for portfolio reviews, project handoffs, technical due diligence, and fast first-pass audits of unfamiliar codebases.
 
@@ -33,7 +34,7 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 | Web app | React + Vite UI with login/register, guest demo mode, async review jobs, project history, run details, and report export. |
 | Backend | FastAPI endpoints for live reviews, persistent job polling, Supabase Auth verification, CORS, rate limiting, and public demo controls. |
 | Persistence | Supabase/Postgres schema for repositories, review runs, findings, AI reviews, and durable `review_jobs` state. |
-| AI options | Optional OpenAI, OpenRouter, or local Ollama synthesis; deterministic review still works without an LLM key. |
+| AI options | Optional OpenAI, OpenRouter, Anthropic, or local Ollama synthesis; deterministic review still works without an LLM key. |
 | Automation | GitHub Actions CI, GitHub Pages demo deploy, Render backend blueprint, Docker support, PR bot, GitHub issue drafts, and MCP server. |
 | Safety | Row-level security, per-user history ownership, service-role-only history writes, GitHub-only public target policy, and secret scanning heuristics. |
 
@@ -49,8 +50,34 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 - **Input**: local repository path or public GitHub repository URL.
 - **Output**: Markdown report, structured JSON, optional GitHub issue drafts, and optional PR comment.
 - **Review depth**: source structure, dependency manifests, tests, CI, docs, Docker hardening, secret-like values, framework signals, and evidence file paths.
-- **AI layer**: optional OpenAI, OpenRouter, or local Ollama synthesis with stable JSON sections, prompt-tuning rules, and few-shot examples.
+- **AI layer**: optional OpenAI, OpenRouter, Anthropic, or local Ollama synthesis with stable JSON sections, prompt-tuning rules, and few-shot examples.
 - **Interfaces**: CLI, React web UI, FastAPI endpoint, Docker workflow, GitHub integration, and MCP server.
+
+
+### LangChain installation and runtime
+
+The base install includes LangChain, LangGraph and the offline review workflow. Install the integration for your model provider before enabling AI:
+
+```bash
+python -m pip install -e ".[openai]"     # OpenAI and OpenRouter
+python -m pip install -e ".[anthropic]"  # Anthropic
+python -m pip install -e ".[ollama]"     # Local Ollama
+python -m pip install -e ".[all]"        # All providers, Web and MCP
+```
+
+For a local Web server with one provider, combine extras, for example `.[web,openai]`. Both Docker images install `.[all]`. Existing API keys, model environment variables, OpenRouter attribution headers and `OLLAMA_BASE_URL` retain their meanings. An agent model must support tool calling, including the `ReviewSections` output tool; select a tool-capable model explicitly if a provider's automatic router selects an incompatible model. Direct mode uses validated JSON synthesis and does not require tool support.
+
+```bash
+repo-review . --agent --ai-provider openrouter --ai-model openrouter/auto
+repo-review . --agent --ai-provider ollama --ai-model llama3.2
+repo-review . --agent --ai-provider none  # No model, network or API key required
+```
+
+The agent prepares the baseline report before contacting the model. Each run owns its repository state. Tool reads are limited to scanned files inside the repository, exclude `.env` files, and accept at most 8,000 characters per call. Tool results and the initial report context are bounded. Default limits are 8 model calls and 12 repository tool calls, with no SDK retries; `RepoReviewAgent(max_turns=..., max_tool_calls=...)` can customize these. The offline `max_steps` budget is separate. API request timeouts and output token limits still apply.
+
+New AI output must contain four non-empty string lists: `architecture_summary`, `risks`, `project_highlights`, and `next_steps`. Direct synthesis allows one format-repair request; agent repairs share its model-call budget. Invalid output, unsupported tool calling and exhausted budgets never produce a successful AI status. Normal agent runs preserve the base report and attach an AI error; `--fail-on-ai-error` raises instead. Legacy `--function-calling` and `--chatgpt-agent` keep strict error behavior and their provider labels. Historical Markdown/JSON parsing remains supported.
+
+See [LangChain agents](https://docs.langchain.com/oss/python/langchain/agents) and the [migration design](docs/superpowers/specs/2026-09-20-langchain-rebuild-design.md).
 
 ## Product Capabilities
 
@@ -63,9 +90,9 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 - Supports Supabase email/password login for the web UI, with authenticated review history saved per user.
 - Provides a signed-in project detail view with latest score, top risks, AI summary, issue backlog, run history, and score trends.
 - Supports English and Simplified Chinese report output.
-- Includes a custom `RepoReviewAgent` that uses a traceable tool-calling loop.
-- Includes an OpenAI Responses API function-calling agent where the model calls repository tools.
-- Adds an optional AI review section through OpenAI, OpenRouter, or local Ollama.
+- Uses a shared LangChain `create_agent` runtime with typed repository tools, validated structured output, and bounded model/tool calls.
+- Runs an offline LangGraph workflow when no AI provider is configured; legacy OpenAI and ChatGPT flags delegate to the same runtime.
+- Adds an optional AI review section through OpenAI, OpenRouter, Anthropic, or local Ollama.
 - Keeps AI synthesis evidence-bound with shared prompt-tuning guidance and few-shot JSON examples.
 - Creates GitHub issue drafts, can create GitHub issues, and can post pull request comments.
 - Includes a GitHub Actions PR bot that compares PRs against the base branch, comments on new risks, scans `main` on a schedule, and blocks CI on high-severity findings.
@@ -86,8 +113,8 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 
 1. The scanner maps files, languages, dependency manifests, docs, tests, CI files, and operational config.
 2. The analyzer applies deterministic review rules and attaches evidence file paths to every finding.
-3. The agent can inspect key files and preserve a trace of its tool calls.
-4. The optional AI layer receives the structured scan result and returns stable JSON sections.
+3. The offline LangGraph workflow inspects key files and prepares a deterministic report using shared LangChain tools.
+4. The optional LangChain agent receives the prepared report, calls repository tools for additional evidence, and returns four validated review sections.
 5. The renderer produces Markdown, JSON, web UI cards, GitHub issue drafts, and MCP responses.
 
 ## Architecture
@@ -96,7 +123,8 @@ The product is designed for portfolio reviews, project handoffs, technical due d
 flowchart LR
     User["User"] --> UI["React + Tailwind Web UI"]
     UI --> API["FastAPI /review API"]
-    API --> Agent["RepoReviewAgent"]
+    API --> Service["Shared review service"]
+    Service --> Agent["LangGraph preparation + LangChain agent"]
     Agent --> Scan["scan_repository tool"]
     Agent --> Inspect["inspect_file tool"]
     Agent --> Analyze["analyze_repository tool"]
@@ -105,7 +133,8 @@ flowchart LR
     LLM --> Providers["OpenAI / OpenRouter / Ollama"]
     API --> Report
     Report --> UI
-    MCP["MCP Server"] --> Agent
+    CLI["CLI"] --> Service
+    MCP["MCP Server"] --> Service
     GitHub["GitHub Issues / PR Comments"] --> Report
 ```
 
@@ -125,7 +154,7 @@ Analyze the current repository:
 repo-review . --output review-report.md --json review-report.json
 ```
 
-Run without installing the package:
+Run from source after installing the dependencies above:
 
 ```bash
 PYTHONPATH=src python -m repo_review_agent.cli . --output review-report.md
@@ -143,7 +172,7 @@ repo-review . --lint --output review-report.md
 The web API exposes the same enrichment through a `"lint": true` field on the
 review request payload.
 
-Run the custom agent loop:
+Run the offline LangGraph review workflow:
 
 ```bash
 PYTHONPATH=src python -m repo_review_agent.cli . --agent --output review-report.md --json review-report.json
@@ -152,13 +181,14 @@ PYTHONPATH=src python -m repo_review_agent.cli . --agent --output review-report.
 The agent records each step in the generated report:
 
 ```text
-Thought -> Action/tool -> Observation
+Tool -> Validated arguments -> Observation
 scan_repository -> inspect_file -> analyze_repository -> finalize_report
 ```
 
-Run the OpenAI function-calling agent:
+Run the LangChain OpenAI agent (the legacy flag remains supported):
 
 ```bash
+python -m pip install -e ".[openai]"
 export OPENAI_API_KEY="your_api_key_here"
 PYTHONPATH=src python -m repo_review_agent.cli . --function-calling --output review-report.md
 ```
@@ -170,7 +200,7 @@ export OPENAI_API_KEY="your_api_key_here"
 repo-review . --chatgpt-agent --output review-report.md --json review-report.json
 ```
 
-The ChatGPT agent uses the OpenAI Responses API with repository tools. The model can ask the app to scan the repository, inspect important files, run deterministic analysis, and render a report preview before returning the final structured AI review. Keep `OPENAI_API_KEY` in your environment or deployment secrets; do not commit it to the repository.
+The ChatGPT flag delegates to the same LangChain agent using the OpenAI model integration and keeps the `chatgpt-api` report label. The model can ask the app to scan the repository, inspect important files, run deterministic analysis, and render a report preview before returning the final structured AI review. Keep `OPENAI_API_KEY` in your environment or deployment secrets; do not commit it to the repository.
 
 Analyze another local repository:
 
@@ -320,7 +350,7 @@ export OPENAI_API_KEY="your_api_key_here"
 repo-review . --ai-provider openai --output review-report.md
 ```
 
-Run the custom agent with OpenAI synthesis:
+Run the LangChain agent with OpenAI tool calling:
 
 ```bash
 repo-review . --agent --ai-provider openai --output review-report.md
@@ -511,13 +541,18 @@ The static frontend demo can be deployed to GitHub Pages and still show the full
 
 ```text
 src/repo_review_agent/
-  agent.py      # Custom tool-calling agent orchestration layer
+  agent.py      # LangGraph preparation and LangChain create_agent execution
+  review_tools.py # Typed repository tools and per-run state
+  review_schema.py # Validated four-section AI output
+  provider.py   # LangChain provider factory and safe errors
+  service.py    # Shared CLI, Web, and MCP dispatch
   analyzer.py   # Rule-based review logic
   cli.py        # Command-line interface
-  function_agent.py # OpenAI function-calling agent
+  function_agent.py # Legacy OpenAI compatibility adapter
+  chatgpt_agent.py # Legacy ChatGPT label adapter
   github.py     # GitHub issues and PR comments
   i18n.py       # English and Simplified Chinese report localization
-  llm.py        # Optional OpenAI, OpenRouter, and Ollama AI review layer
+  llm.py        # LangChain synthesis, prompts and historical report parsing
   mcp_server.py # MCP tools for AI coding assistants
   models.py     # Structured report data models
   report.py     # Markdown and JSON report rendering
@@ -535,7 +570,7 @@ frontend/       # React + Tailwind CSS frontend
 - **Offline-first review core**: the scanner and deterministic analyzer work without an API key, so the product can still generate useful reports in local, CI, or restricted environments.
 - **Evidence-backed findings**: each finding includes evidence text and relevant file paths, making the report easier to verify and turn into engineering tasks.
 - **Traceable agent workflow**: agent runs expose their tool calls, so users can see how the review moved from scan to inspection to final report.
-- **Flexible AI synthesis**: OpenAI, OpenRouter, and Ollama can be used to add richer architecture and risk summaries without changing the deterministic review contract.
+- **Flexible AI synthesis**: OpenAI, OpenRouter, Anthropic, and Ollama can be used to add richer architecture and risk summaries without changing the deterministic review contract.
 - **Multiple delivery surfaces**: the same report model powers the CLI, web UI, GitHub issue generation, PR comments, MCP tools, and API responses.
 
 ## Product Positioning
@@ -563,3 +598,36 @@ Strong use cases:
 ## License
 
 This project is licensed under the MIT License.
+
+
+## Review evidence and observability
+
+The scanner keeps a path inventory separate from its bounded content sample, so files outside the sample do not cause false missing-file findings. The model can list sampled files, search text and read numbered lines. Structured code findings must quote lines actually read during that run; locations and quotes are checked again before rendering. This verifies the source citation, not whether the model's interpretation is correct.
+
+Common credentials are redacted before source reaches the model and before report export. Sensitive key/environment files are not exposed by inspection tools. Redaction is best effort. Persisted tool traces contain summaries instead of raw inspected source.
+
+See [Langfuse setup](docs/langfuse.md) for optional model/tool tracing and [job recovery deployment](docs/deployment.md#bounded-jobs-and-recovery) for the required Supabase migration.
+
+Additional verification:
+
+```bash
+python -m coverage run -m unittest discover -s tests
+python -m coverage report
+cd frontend
+npm test
+npx playwright install chromium
+npm run test:browser
+```
+
+Provider smoke tests are opt-in: `REPO_REVIEW_LIVE_TEST=1 python -m unittest discover -s tests -p test_live_provider.py`. Configure the chosen provider first; normal tests use local deterministic models and make no model API calls.
+
+
+## Review decisions, evaluations and follow-up
+
+Rule and AI findings now share stable identities across reports, history, issue drafts and PR comparisons. Project history lets signed-in owners confirm findings, mark false positives or ignore them with a reason and optional expiry. Raw evidence remains available while effective scores and issue/PR decisions honor active feedback.
+
+Review jobs support owner cancellation and daily admission quotas. AI reviews share a conservative token reservation budget across model calls. The web UI exposes these controls, optional OSV dependency checks, and report questions with existing evidence citations.
+
+Use `--changed-files-json pr-files.json` to prioritize PR changes during review, then generate GitHub Checks annotations with the PR bot's dry-run/create modes. Configure project rules through `.repo-review.json`. Run the labeled quality dataset with `repo-review-evaluate` and optionally send numeric evaluation scores to Langfuse.
+
+See the [feature guide](docs/feature-expansion.md), [evaluation guide](docs/evaluation.md), and [next improvement review](docs/next-improvements.md). New deployments must apply both `20261005` migrations after the job lease migration.

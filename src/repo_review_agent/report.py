@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
+from .findings import effective_findings, review_findings
 from .i18n import localize_report, normalize_report_language
 from .models import Finding, ReviewReport
+from .redaction import redact_text
 
 REPORT_LABELS = {
     "en": {
@@ -81,7 +84,7 @@ REPORT_LABELS = {
 def render_markdown(report: ReviewReport, *, language: str | None = None) -> str:
     language = normalize_report_language(language)
     labels = REPORT_LABELS[language]
-    report = localize_report(report, language)
+    report = localize_report(replace(report, findings=review_findings(report)), language)
 
     lines: list[str] = [
         f"# {labels['title']}: {report.repo_name}",
@@ -111,6 +114,23 @@ def render_markdown(report: ReviewReport, *, language: str | None = None) -> str
         lines.append("")
         if report.ai_review.status == "generated":
             lines.append(report.ai_review.summary)
+            if report.ai_review.findings:
+                title = (
+                    "已核验证据的代码发现"
+                    if language == "zh-CN"
+                    else "Code Findings with Verified Evidence"
+                )
+                lines.extend(["", f"### {title}", ""])
+                for item in report.ai_review.findings:
+                    lines.extend(
+                        [
+                            f"- [{item['severity'].upper()}] {item['title']}",
+                            f"  - `{item['path']}:{item['start_line']}-{item['end_line']}` (confidence: {item['confidence']})",
+                            f"  - {item['recommendation']}",
+                            "",
+                        ]
+                    )
+                    lines.extend(f"    {line}" for line in item["evidence"].splitlines())
         else:
             lines.append(f"{labels['ai_error']}: `{report.ai_review.error}`")
         lines.append("")
@@ -121,25 +141,27 @@ def render_markdown(report: ReviewReport, *, language: str | None = None) -> str
             lines.append(f"### {labels['step']} {index}: `{step.tool}`")
             lines.append("")
             lines.append(f"- {labels['thought']}: {step.thought}")
-            lines.append(f"- {labels['input']}: `{json.dumps(step.tool_input, ensure_ascii=False)}`")
+            lines.append(
+                f"- {labels['input']}: `{json.dumps(step.tool_input, ensure_ascii=False)}`"
+            )
             lines.append(f"- {labels['observation']}: {step.observation}")
             lines.append("")
 
     lines.extend(["", f"## {labels['findings']}", ""])
-    for index, finding in enumerate(report.findings, start=1):
+    for index, finding in enumerate(review_findings(report), start=1):
         lines.extend(_render_finding(index, finding, labels))
 
     lines.extend(["", f"## {labels['issue_backlog']}", ""])
-    for finding in report.findings:
+    for finding in effective_findings(report):
         if finding.severity == "info":
             continue
         lines.append(f"- [{finding.severity.upper()}] {finding.title} - {finding.recommendation}")
 
-    if all(finding.severity == "info" for finding in report.findings):
+    if all(finding.severity == "info" for finding in effective_findings(report)):
         lines.append(f"- {labels['no_issues']}")
 
     lines.append("")
-    return "\n".join(lines)
+    return redact_text("\n".join(lines))
 
 
 def write_json(report: ReviewReport, output_path: Path) -> None:

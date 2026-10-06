@@ -1,14 +1,76 @@
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from repo_review_agent.analyzer import analyze_repository, build_overview, detect_framework_signals
+from repo_review_agent.analyzer import (
+    analyze_repository,
+    analyze_snapshot,
+    build_overview,
+    detect_framework_signals,
+)
 from repo_review_agent.models import Finding
 from repo_review_agent.scanner import scan_repository
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_limited_scan_does_not_report_present_metadata_missing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("a.py", "README.md", "LICENSE", ".gitignore", "package.json",
+                         "package-lock.json", "test_app.py", ".gitlab-ci.yml"):
+                (root / name).write_text("{}", encoding="utf-8")
+            report = analyze_repository(root, max_files=1)
+        titles = {finding.title for finding in report.findings}
+        self.assertFalse(titles & {
+            "Add a README with setup and usage instructions", "Add an explicit open-source license",
+            "Add a .gitignore file", "Add automated tests for the core behavior",
+            "Add a CI workflow", "Add a dependency manifest", "Commit a JavaScript package lockfile",
+            "Run automated tests in CI", "Build frontend assets in CI",
+        })
+        self.assertEqual(report.metrics["files_skipped"], 7)
+
+    def test_malformed_package_shapes_report_problem_without_crashing(self) -> None:
+        for content in ('[]', 'null', '{"dependencies":null}', '{"dependencies":[]}',
+                        '{"dependencies":{"react":123}}'):
+            with self.subTest(content=content), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "package.json").write_text(content, encoding="utf-8")
+                report = analyze_repository(root)
+                self.assertIn("Repair malformed package.json", {f.title for f in report.findings})
+
+    def test_incomplete_inventory_suppresses_absence_claims(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("print('hello')", encoding="utf-8")
+            snapshot = replace(scan_repository(root), inventory_complete=False)
+            report = analyze_snapshot(snapshot, root)
+        self.assertEqual(
+            {finding.title for finding in report.findings},
+            {"Review incomplete file inventory"},
+        )
+        self.assertFalse(any(line.startswith("No ") for line in report.overview))
+
+    def test_oversized_metadata_is_present_but_not_analyzed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("x" * 100, encoding="utf-8")
+            (root / "package.json").write_text("[" * 100, encoding="utf-8")
+            report = analyze_repository(root, max_file_size=10)
+        titles = {finding.title for finding in report.findings}
+        self.assertNotIn("Add a README with setup and usage instructions", titles)
+        self.assertNotIn("Expand README with setup and example output", titles)
+        self.assertNotIn("Repair malformed package.json", titles)
+
+    def test_ci_command_beyond_content_limit_does_not_produce_absence_claim(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("print('hello')", encoding="utf-8")
+            (root / ".gitlab-ci.yml").write_text("# padding\n" * 10000 + "pytest", encoding="utf-8")
+            report = analyze_repository(root)
+        self.assertNotIn("Run automated tests in CI", {f.title for f in report.findings})
+
     def test_run_linters_flag_appends_linter_findings(self) -> None:
         lint_finding = Finding(
             title="Fix 1 Ruff F401 lint finding(s)",

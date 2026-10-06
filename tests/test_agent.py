@@ -1,126 +1,119 @@
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from repo_review_agent.agent import (
-    AgentState,
-    RepoReviewAgent,
-    _compact_preview,
-    _is_helpful_doc_candidate,
-)
+from fake_model import ScriptedModel, call, final
+from langchain_core.messages import AIMessage
+
+from repo_review_agent.agent import RepoReviewAgent
 from repo_review_agent.llm import AIProviderError
 from repo_review_agent.report import render_markdown
 
 
 class RepoReviewAgentTests(unittest.TestCase):
-    def test_agent_runs_tool_calling_loop(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "src").mkdir()
-            (root / "tests").mkdir()
-            (root / ".github" / "workflows").mkdir(parents=True)
-            (root / "README.md").write_text("# Example\n\nA demo project.\n", encoding="utf-8")
-            (root / "pyproject.toml").write_text("[project]\nname = 'example'\n", encoding="utf-8")
-            (root / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
-            (root / "tests" / "test_app.py").write_text("def test_app(): pass\n", encoding="utf-8")
-            (root / ".github" / "workflows" / "ci.yml").write_text("name: CI\n", encoding="utf-8")
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "README.md").write_text("# Example\nEvidence from README.")
+        (self.root / "app.py").write_text('print("hello")')
 
-            report = RepoReviewAgent().run(root)
-
-        self.assertIsNotNone(report.agent_trace)
-        tools = [step.tool for step in report.agent_trace or []]
+    def test_offline_graph_and_trace(self):
+        report = RepoReviewAgent().run(self.root)
+        self.assertEqual(report.metrics["agent_framework"], "langchain")
+        tools = [step.tool for step in report.agent_trace]
         self.assertEqual(tools[0], "scan_repository")
         self.assertIn("inspect_file", tools)
         self.assertIn("analyze_repository", tools)
         self.assertEqual(tools[-1], "finalize_report")
         self.assertIn("README.md", report.metrics["agent_inspected_files"])
-        self.assertIn("pyproject.toml", report.metrics["agent_inspected_files"])
+        self.assertIn("## Agent Trace", render_markdown(report))
+        self.assertIsNone(report.ai_review)
 
-    def test_agent_trace_renders_to_markdown(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "README.md").write_text("# Example\n", encoding="utf-8")
-            report = RepoReviewAgent().run(root)
-
-        markdown = render_markdown(report)
-
-        self.assertIn("## Agent Trace", markdown)
-        self.assertIn("scan_repository", markdown)
-        self.assertIn("finalize_report", markdown)
-
-    @patch("repo_review_agent.agent.add_ai_review")
-    def test_agent_generates_ai_review_when_configured(self, mock_add_ai_review) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "README.md").write_text("# Example\n", encoding="utf-8")
-
-            def attach(report, **kwargs):
-                from dataclasses import replace
-
-                from repo_review_agent.models import AIReview
-
-                return replace(
-                    report,
-                    ai_review=AIReview(
-                        provider=kwargs["provider"],
-                        model="mock-model",
-                        status="generated",
-                        summary="ok",
-                    ),
-                )
-
-            mock_add_ai_review.side_effect = attach
-            report = RepoReviewAgent(ai_provider="ollama").run(root)
-
-        self.assertIsNotNone(report.ai_review)
+    def test_real_agent_calls_tools_and_returns_structured_review(self):
+        model = ScriptedModel(responses=[call("inspect_file", {"path": "app.py"}), final()])
+        with patch("repo_review_agent.agent.create_chat_model", return_value=model):
+            report = RepoReviewAgent(ai_provider="ollama", report_language="zh-CN").run(self.root)
         self.assertEqual(report.ai_review.status, "generated")
-        self.assertIn("generate_ai_review", [step.tool for step in report.agent_trace or []])
+        self.assertEqual(report.ai_review.sections["risks"], ["Evidence-bound risk."])
+        self.assertIn("app.py", report.metrics["agent_inspected_files"])
+        self.assertIn("## AI 架构总结", report.ai_review.summary)
+        self.assertTrue(
+            any("print" in m.content for m in model.seen_messages[-1] if m.type == "tool")
+        )
+        self.assertIn("Simplified Chinese", str(model.seen_messages[0]))
 
-    @patch("repo_review_agent.agent.add_ai_review")
-    def test_agent_preserves_report_when_ai_review_fails(self, mock_add_ai_review) -> None:
-        mock_add_ai_review.side_effect = AIProviderError("offline")
+    def test_invalid_tool_arguments_are_recoverable(self):
+        model = ScriptedModel(
+            responses=[call("inspect_file", {"path": "README.md", "max_chars": -1}), final()]
+        )
+        with patch("repo_review_agent.agent.create_chat_model", return_value=model):
+            report = RepoReviewAgent(ai_provider="ollama").run(self.root)
+        self.assertEqual(report.ai_review.status, "generated")
+        self.assertTrue(
+            any(m.type == "tool" and m.status == "error" for m in model.seen_messages[-1])
+        )
 
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "README.md").write_text("# Example\n", encoding="utf-8")
-            report = RepoReviewAgent(ai_provider="ollama").run(root)
+    def test_structured_output_is_repaired(self):
+        model = ScriptedModel(responses=[final({"risks": []}), final()])
+        with patch("repo_review_agent.agent.create_chat_model", return_value=model):
+            report = RepoReviewAgent(ai_provider="ollama").run(self.root)
+        self.assertEqual(report.ai_review.status, "generated")
+        self.assertEqual(len(model.seen_messages), 2)
 
-        self.assertIsNotNone(report.ai_review)
-        self.assertEqual(report.ai_review.status, "error")
-        self.assertIn("offline", report.ai_review.error)
-
-    @patch("repo_review_agent.agent.add_ai_review")
-    def test_agent_can_fail_on_ai_error(self, mock_add_ai_review) -> None:
-        mock_add_ai_review.side_effect = AIProviderError("offline")
-
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "README.md").write_text("# Example\n", encoding="utf-8")
-
+    def test_provider_failure_preserves_base_report_or_raises(self):
+        with patch(
+            "repo_review_agent.agent.create_chat_model", side_effect=AIProviderError("offline")
+        ):
+            report = RepoReviewAgent(ai_provider="ollama").run(self.root)
+            self.assertTrue(report.findings)
+            self.assertEqual(report.ai_review.status, "error")
+            self.assertIn("offline", report.ai_review.error)
             with self.assertRaises(AIProviderError):
-                RepoReviewAgent(ai_provider="ollama", fail_on_ai_error=True).run(root)
+                RepoReviewAgent(ai_provider="ollama", fail_on_ai_error=True).run(self.root)
 
-    def test_agent_tool_methods_require_order(self) -> None:
+    def test_missing_final_output_is_error(self):
+        model = ScriptedModel(responses=[AIMessage(content="done")])
+        with patch("repo_review_agent.agent.create_chat_model", return_value=model):
+            report = RepoReviewAgent(ai_provider="ollama", max_turns=2).run(self.root)
+        self.assertEqual(report.ai_review.status, "error")
+
+    def test_model_loop_and_tool_batch_are_bounded(self):
+        for response in (
+            call("scan_repository"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "scan_repository", "args": {}, "id": str(i)} for i in range(10)
+                ],
+            ),
+        ):
+            model = ScriptedModel(responses=[response])
+            with patch("repo_review_agent.agent.create_chat_model", return_value=model):
+                report = RepoReviewAgent(ai_provider="ollama", max_turns=2, max_tool_calls=3).run(
+                    self.root
+                )
+            self.assertEqual(report.ai_review.status, "error")
+            self.assertLessEqual(len(model.seen_messages), 2)
+
+    def test_offline_budget_does_not_return_incomplete_success(self):
+        with self.assertRaises(RuntimeError):
+            RepoReviewAgent(max_steps=1).run(self.root)
+
+    def test_runs_do_not_share_state(self):
         agent = RepoReviewAgent()
-        state = AgentState(root=Path(".").resolve())
+        with TemporaryDirectory() as other:
+            root2 = Path(other)
+            (root2 / "package.json").write_text("{}")
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                reports = list(pool.map(agent.run, [self.root, root2]))
+            self.assertIn("README.md", reports[0].metrics["agent_inspected_files"])
+            self.assertNotIn("README.md", reports[1].metrics["agent_inspected_files"])
+            self.assertNotIn("package.json", reports[0].metrics["agent_inspected_files"])
 
-        with self.assertRaises(RuntimeError):
-            agent._tool_analyze_repository(state, {})
-
-        with self.assertRaises(RuntimeError):
-            agent._tool_finalize_report(state, {})
-
-        with self.assertRaises(RuntimeError):
-            agent._tool_generate_ai_review(state, {"provider": "ollama"})
-
-    def test_compact_preview_and_doc_candidate_helpers(self) -> None:
-        self.assertEqual(_compact_preview("\n\n"), "")
-        self.assertEqual(_compact_preview("abcdef", max_chars=5), "ab...")
-        self.assertFalse(_is_helpful_doc_candidate("README.md"))
-        self.assertFalse(_is_helpful_doc_candidate("docs/example-report.md"))
-        self.assertTrue(_is_helpful_doc_candidate("docs/architecture.md"))
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_empty_repository(self):
+        with TemporaryDirectory() as tmp:
+            report = RepoReviewAgent().run(Path(tmp))
+        self.assertEqual(report.metrics["agent_inspected_files"], [])

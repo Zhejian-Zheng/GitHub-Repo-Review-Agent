@@ -121,3 +121,29 @@ class MCPServerHelpersTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MCPIntegrationTests(unittest.TestCase):
+    def test_installed_mcp_registers_real_tools(self):
+        import importlib.util
+
+        if importlib.util.find_spec("mcp") is None:
+            self.skipTest("Optional MCP integration is not installed")
+        import asyncio
+
+        server = create_mcp_server()
+        tools = asyncio.run(server.list_tools())
+        self.assertEqual(
+            {tool.name for tool in tools},
+            {"review_repository", "generate_issue_backlog", "summarize_architecture"},
+        )
+
+
+class CanonicalMCPTests(unittest.TestCase):
+    def test_suppressed_ai_issue_stays_suppressed_in_mcp_export(self):
+        data = {'repo_name':'repo','generated_at':'','findings':[{
+            'title':'Unsafe return','category':'code','severity':'high','evidence':['return x'],
+            'recommendation':'Review','source':'ai','path':'app.py','start_line':1,'end_line':1,
+            'evidence_paths':['app.py'],'fingerprint':'verified-identity'
+        }], 'finding_feedback':[{'fingerprint':'verified-identity','status':'false_positive'}]}
+        self.assertEqual(issue_drafts_from_report_dict(data),[])

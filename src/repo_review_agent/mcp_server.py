@@ -3,11 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .agent import RepoReviewAgent
-from .analyzer import analyze_repository
 from .cli import resolve_target
 from .github import issue_drafts_from_report
 from .report import render_markdown
+from .service import run_review
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -42,11 +41,9 @@ def _run_review_for_path(
     max_files: int,
     max_file_size: int,
 ):
-    if mode == "agent":
-        return RepoReviewAgent(max_files=max_files, max_file_size=max_file_size).run(repo_path)
-    if mode == "direct":
-        return analyze_repository(repo_path, max_files=max_files, max_file_size=max_file_size)
-    raise ValueError("mode must be 'agent' or 'direct' for MCP tools.")
+    if mode not in {"agent", "direct"}:
+        raise ValueError("mode must be 'agent' or 'direct' for MCP tools.")
+    return run_review(repo_path, mode=mode, max_files=max_files, max_file_size=max_file_size)
 
 
 def create_mcp_server():
@@ -90,17 +87,12 @@ def create_mcp_server():
 
 
 def issue_drafts_from_report_dict(report_dict: dict[str, Any]):
+    from dataclasses import fields
+
     from .models import Finding, ReviewReport
 
     findings = [
-        Finding(
-            title=finding["title"],
-            severity=finding["severity"],
-            category=finding["category"],
-            evidence=list(finding.get("evidence", [])),
-            recommendation=finding["recommendation"],
-            evidence_paths=list(finding.get("evidence_paths", [])),
-        )
+        Finding(**{field.name: finding[field.name] for field in fields(Finding) if field.name in finding})
         for finding in report_dict.get("findings", [])
     ]
     report = ReviewReport(
@@ -110,6 +102,7 @@ def issue_drafts_from_report_dict(report_dict: dict[str, Any]):
         metrics=dict(report_dict.get("metrics", {})),
         framework_signals=dict(report_dict.get("framework_signals", {})),
         findings=findings,
+        finding_feedback=list(report_dict.get("finding_feedback", [])),
     )
     return issue_drafts_from_report(report)
 

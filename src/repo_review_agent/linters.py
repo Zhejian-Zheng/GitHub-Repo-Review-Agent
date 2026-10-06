@@ -48,7 +48,12 @@ def ruff_findings(
     timeout: float = RUFF_TIMEOUT,
     max_findings: int = RUFF_MAX_FINDINGS,
 ) -> list[Finding]:
-    diagnostics = _run_ruff(root, timeout=timeout)
+    try:
+        diagnostics = _run_ruff(root, timeout=timeout)
+    except LinterUnavailable as exc:
+        return [Finding("Ruff check unavailable", "info", "tool status", [str(exc)],
+                        "Restore Ruff and rerun the check; no clean result was established.",
+                        rule_id="tool.ruff.unavailable")]
     if not diagnostics:
         return []
 
@@ -101,15 +106,22 @@ def _finding_for_code(code: str, diagnostics: list[dict], root: Path) -> Finding
     )
 
 
+class LinterUnavailable(RuntimeError):
+    """A missing or failed tool is not a clean review."""
+
+
 def _run_ruff(root: Path, *, timeout: float) -> list:
     executable = shutil.which("ruff")
     if not executable:
-        return []
+        raise LinterUnavailable("Ruff is not installed.")
     try:
         result = subprocess.run(
             [
                 executable,
                 "check",
+                "--isolated",
+                "--no-fix",
+                "--no-fix-only",
                 "--output-format",
                 "json",
                 "--exit-zero",
@@ -122,17 +134,21 @@ def _run_ruff(root: Path, *, timeout: float) -> list:
             text=True,
             timeout=timeout,
         )
-    except (OSError, subprocess.SubprocessError):
-        return []
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise LinterUnavailable("Ruff could not finish (unavailable or timed out).") from exc
 
+    if result.returncode != 0:
+        raise LinterUnavailable("Ruff exited with an error.")
     stdout = result.stdout.strip()
     if not stdout:
-        return []
+        raise LinterUnavailable("Ruff returned no diagnostics document.")
     try:
         parsed = json.loads(stdout)
-    except json.JSONDecodeError:
-        return []
-    return parsed if isinstance(parsed, list) else []
+    except json.JSONDecodeError as exc:
+        raise LinterUnavailable("Ruff returned an invalid diagnostics document.") from exc
+    if not isinstance(parsed, list):
+        raise LinterUnavailable("Ruff returned an invalid diagnostics document.")
+    return parsed
 
 
 def _ruff_severity(code: str) -> str:

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import stat
 from collections import Counter
 from pathlib import Path
 
+from .config import path_is_ignored
 from .models import RepoFile, RepositorySnapshot
 
 IGNORED_DIRS = {
@@ -114,87 +116,90 @@ def scan_repository(
     *,
     max_files: int = 500,
     max_file_size: int = 512_000,
+    ignore_patterns: list[str] | tuple[str, ...] = (),
+    priority_paths: list[str] | tuple[str, ...] = (),
 ) -> RepositorySnapshot:
     root = root.resolve()
-    files: list[RepoFile] = []
-    skipped_files = 0
+    inventory: list[RepoFile] = []
     skipped_file_paths: list[str] = []
+    walk_errors: list[OSError] = []
 
-    for path in _iter_files(root):
+    for path in _iter_files(root, onerror=walk_errors.append, ignore_patterns=ignore_patterns):
         rel_path = _relative_path(root, path)
-
-        if len(files) >= max_files:
-            skipped_files += 1
-            skipped_file_paths.append(rel_path)
-            break
-
         try:
-            stat = path.stat()
-        except OSError:
-            skipped_files += 1
+            metadata = path.lstat()
+        except OSError as error:
+            walk_errors.append(error)
             skipped_file_paths.append(rel_path)
             continue
-
-        if stat.st_size > max_file_size:
-            skipped_files += 1
-            skipped_file_paths.append(rel_path)
+        if not stat.S_ISREG(metadata.st_mode):
             continue
-
         suffix = path.suffix.lower()
         language = LANGUAGE_BY_SUFFIX.get(suffix)
-        kind = _classify_file(rel_path, path.name, language)
-        files.append(
-            RepoFile(
-                path=rel_path,
-                size_bytes=stat.st_size,
-                suffix=suffix,
-                kind=kind,
-                language=language,
-            )
-        )
+        inventory.append(RepoFile(
+            path=rel_path, size_bytes=metadata.st_size, suffix=suffix,
+            kind=_classify_file(rel_path, path.name, language), language=language,
+        ))
 
+    # Keep a complete path inventory, but bound the files eligible for content
+    # inspection. Important metadata takes precedence over alphabetical source files.
+    def priority(file: RepoFile) -> tuple[int, str, str]:
+        name = file.path.lower()
+        rank = (
+            -1 if file.path in priority_paths else
+            0 if name == "readme.md" else
+            1 if name in {"license", "license.md"} else
+            2 if file.kind in {"dependency", "ci", "project-meta", "ops"} else
+            3 if file.kind == "test" else 4
+        )
+        return rank, name, file.path
+
+    files: list[RepoFile] = []
+    for file in sorted(inventory, key=priority):
+        if file.size_bytes > max_file_size or len(files) >= max_files:
+            skipped_file_paths.append(file.path)
+        else:
+            files.append(file)
+    files.sort(key=lambda file: (file.path.lower(), file.path))
+    skipped_file_paths.sort()
     language_counts = Counter(
-        file.language
-        for file in files
+        file.language for file in inventory
         if file.kind == "source" and file.language in SOURCE_LANGUAGES
     )
-
-    top_level_items = sorted(
-        item.name
-        for item in root.iterdir()
-        if item.name not in EXCLUDED_DIRS and item.name != ".git"
-    )
-
+    try:
+        top_level_items = sorted(
+            item.name for item in root.iterdir()
+            if item.name not in EXCLUDED_DIRS and not item.is_symlink()
+            and not path_is_ignored(item.name, ignore_patterns)
+        )
+    except OSError as error:
+        walk_errors.append(error)
+        top_level_items = []
     return RepositorySnapshot(
-        root=str(root),
-        name=root.name,
-        files=files,
-        top_level_items=top_level_items,
-        dependency_files=sorted(file.path for file in files if file.kind == "dependency"),
-        ci_files=sorted(file.path for file in files if file.kind == "ci"),
-        docs_files=sorted(file.path for file in files if file.kind == "docs"),
-        test_files=sorted(file.path for file in files if file.kind == "test"),
-        source_files=sorted(file.path for file in files if file.kind == "source"),
+        root=str(root), name=root.name, files=files, top_level_items=top_level_items,
+        dependency_files=sorted(file.path for file in inventory if file.kind == "dependency"),
+        ci_files=sorted(file.path for file in inventory if file.kind == "ci"),
+        docs_files=sorted(file.path for file in inventory if file.kind == "docs"),
+        test_files=sorted(file.path for file in inventory if file.kind == "test"),
+        source_files=sorted(file.path for file in inventory if file.kind == "source"),
         language_counts=dict(language_counts),
         total_size_bytes=sum(file.size_bytes for file in files),
-        skipped_files=skipped_files,
-        skipped_file_paths=skipped_file_paths,
+        skipped_files=len(skipped_file_paths), skipped_file_paths=skipped_file_paths,
+        inventory_files=inventory, inventory_complete=not walk_errors,
     )
 
 
-def _iter_files(root: Path):
-    paths: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        # Prune ignored and fixture directories in place so we never descend into
-        # large vendored trees (node_modules, .venv) or test sample data.
-        dirnames[:] = [name for name in dirnames if name not in EXCLUDED_DIRS]
-        for filename in filenames:
+def _iter_files(root: Path, *, onerror=None, ignore_patterns=()):
+    for dirpath, dirnames, filenames in os.walk(root, onerror=onerror, followlinks=False):
+        dirnames[:] = sorted(
+            name for name in dirnames
+            if name not in EXCLUDED_DIRS and not (Path(dirpath) / name).is_symlink()
+            and not path_is_ignored(_relative_path(root, Path(dirpath) / name), ignore_patterns)
+        )
+        for filename in sorted(filenames):
             path = Path(dirpath) / filename
-            if path.is_file():
-                paths.append(path)
-
-    paths.sort(key=lambda candidate: _relative_path(root, candidate).lower())
-    yield from paths
+            if not path.is_symlink() and not path_is_ignored(_relative_path(root, path), ignore_patterns):
+                yield path
 
 
 def _relative_path(root: Path, path: Path) -> str:
@@ -242,10 +247,19 @@ def _classify_file(rel_path: str, name: str, language: str | None) -> str:
 
 def read_text_file(root: Path, rel_path: str, *, limit: int = 60_000) -> str:
     root = root.resolve()
-    path = (root / rel_path).resolve()
-    if path != root and not path.is_relative_to(root):
-        return ""
+    candidate = root / rel_path
     try:
-        return path.read_text(encoding="utf-8", errors="replace")[:limit]
-    except OSError:
+        relative = candidate.relative_to(root)
+        if ".." in relative.parts:
+            return ""
+        current = root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return ""
+        if not candidate.is_file():
+            return ""
+        with candidate.open("r", encoding="utf-8", errors="replace") as stream:
+            return stream.read(max(0, limit))
+    except (OSError, ValueError):
         return ""

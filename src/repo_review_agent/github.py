@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from .findings import effective_findings
 from .models import Finding, ReviewReport
 
 GITHUB_API_URL = "https://api.github.com"
@@ -50,7 +51,7 @@ def parse_github_repo(value: str) -> str | None:
 
 def issue_drafts_from_report(report: ReviewReport) -> list[IssueDraft]:
     drafts: list[IssueDraft] = []
-    for finding in report.findings:
+    for finding in effective_findings(report):
         if finding.severity == "info":
             continue
         drafts.append(issue_draft_from_finding(finding))
@@ -91,7 +92,7 @@ def build_pr_comment_body(report: ReviewReport) -> str:
         lines.extend(["", "### AI Review", "", report.ai_review.summary])
 
     lines.extend(["", "### Findings", ""])
-    actionable = [finding for finding in report.findings if finding.severity != "info"]
+    actionable = [finding for finding in effective_findings(report) if finding.severity != "info"]
     if not actionable:
         lines.append("- No immediate issue suggestions.")
     else:
@@ -122,6 +123,69 @@ class GitHubClient:
         if not self.token:
             raise GitHubIntegrationError("GITHUB_TOKEN is required for GitHub create mode.")
         return self.token
+
+    def list_pull_request_files(self, repo: str, pr_number: int) -> list[dict[str, Any]]:
+        files = []
+        for page in range(1, 31):
+            batch = self._request_list(
+                "GET", f"/repos/{repo}/pulls/{pr_number}/files?per_page=100&page={page}"
+            )
+            if not all(
+                isinstance(item, dict)
+                and isinstance(item.get("filename"), str)
+                and item["filename"]
+                for item in batch
+            ):
+                raise GitHubIntegrationError("GitHub returned an invalid PR file listing.")
+            files.extend(batch)
+            if len(batch) < 100:
+                return files
+        raise GitHubIntegrationError(
+            "PR file listing reached GitHub's 3000-file limit; complete diff required."
+        )
+
+    def create_annotated_check(
+        self,
+        repo: str,
+        *,
+        head_sha: str,
+        annotations: list[dict[str, Any]],
+        summary: str,
+        conclusion: str = "neutral",
+    ) -> dict[str, Any]:
+        """Publish only with explicit caller authorization and a Checks-write token."""
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", head_sha):
+            raise GitHubIntegrationError(
+                "Checks annotations require an exact 40-character commit SHA."
+            )
+        payload = {
+            "name": "Repository Review Agent",
+            "head_sha": head_sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "output": {
+                "title": "Repository Review",
+                "summary": summary[:65535],
+                "annotations": annotations[:50],
+            },
+        }
+        response = self._request_dict("POST", f"/repos/{repo}/check-runs", payload)
+        for offset in range(50, len(annotations), 50):
+            check_id = response.get("id")
+            if not isinstance(check_id, int):
+                raise GitHubIntegrationError("GitHub returned a check without an id.")
+            self._request_dict(
+                "PATCH",
+                f"/repos/{repo}/check-runs/{check_id}",
+                {
+                    "output": {
+                        "title": "Repository Review",
+                        "summary": summary[:65535],
+                        "annotations": annotations[offset : offset + 50],
+                    }
+                },
+            )
+        return response
 
     def create_issue(self, repo: str, draft: IssueDraft) -> dict[str, Any]:
         payload: dict[str, Any] = {
