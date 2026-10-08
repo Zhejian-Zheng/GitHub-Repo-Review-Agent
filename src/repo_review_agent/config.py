@@ -132,7 +132,7 @@ def apply_review_config(report: ReviewReport, config: ReviewConfig) -> ReviewRep
         ai = replace(ai, findings=ai_findings)
     return replace(report, findings=findings, ai_review=ai, raw_findings=list(originals.values()),
                    policy_decisions=list(decisions.values()), metrics={
-        **report.metrics, 'policy_source': config._source,
+        **report.metrics, 'policy_source': config._source, 'policy_config': config.model_dump(),
         'config_suppressed_findings': report.metrics.get('config_suppressed_findings', 0)
         + len(report.findings) - len(findings)
         + (len(report.ai_review.findings) - len(ai.findings) if ai else 0),

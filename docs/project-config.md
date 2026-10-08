@@ -1,6 +1,6 @@
 # Project review configuration
 
-Place `.repo-review.json` in the repository root, or select a local policy file with `repo-review PATH --config policy.json`. A missing default file means the default policy. An explicitly selected missing file, invalid JSON, duplicate keys or unsupported fields cause a clear configuration error.
+Repository configuration is **not trusted by default**, including HTTP, MCP and ordinary CLI reviews. To opt in locally, use `repo-review PATH --trust-repository-config` for the root `.repo-review.json`, or explicitly select a trusted file with `repo-review PATH --config policy.json`. Public HTTP callers cannot enable this trust. A missing trusted default file means the default policy. An explicitly selected missing file, invalid JSON, duplicate keys or unsupported fields cause a clear configuration error.
 
 ```json
 {
@@ -32,3 +32,5 @@ Policy filters structured deterministic findings and structured AI findings. Fin
 Each array/map permits at most 100 entries; each selector is at most 500 characters. The UTF-8 JSON file is limited to 64 KiB and must be a regular file, not a symlink. No configuration includes are followed. Configuration errors never echo the file contents.
 
 Use stable IDs when present in JSON reports. Existing deterministic rules without an ID use their exact English title as the compatibility selector. Known dependency vulnerability findings use `dependency.osv`, with category `dependency vulnerabilities`.
+
+Reports retain pre-policy findings in `raw_findings`, with the same export redaction as other report fields. `policy_decisions` records affected finding fingerprints, suppression/severity action and source. `metrics.policy_source` and `metrics.policy_config` disclose the selected scope and policy. Ignored files cannot produce raw findings because they were excluded before scanning. Ruff uses its isolated built-in rules and cannot accept target-project auto-fix settings.

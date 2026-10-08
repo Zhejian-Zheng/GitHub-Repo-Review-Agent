@@ -182,9 +182,8 @@ class RuffHelperTests(unittest.TestCase):
 
     def test_run_ruff_reports_subprocess_errors(self) -> None:
         with patch("repo_review_agent.linters.shutil.which", return_value="/usr/bin/ruff"):
-            with patch("repo_review_agent.linters.subprocess.run", side_effect=OSError):
-                with self.assertRaises(LinterUnavailable):
-                    _run_ruff(Path("."), timeout=1)
+            with patch("repo_review_agent.linters.subprocess.run", side_effect=OSError), self.assertRaises(LinterUnavailable):
+                _run_ruff(Path("."), timeout=1)
             with patch(
                 "repo_review_agent.linters.subprocess.run",
                 side_effect=subprocess.TimeoutExpired("ruff", 1),

@@ -189,3 +189,8 @@ The backend checks queued and expired leases every two seconds. A crashed job ca
 Review work runs in a subprocess. On POSIX systems the deadline kills the process group, including Git and linter children. Worker count remains per application instance; database admission and user quotas are shared. The UI shows actual queued, cloning, analysis and AI phases. Stopping tracking cancels browser polling; it does not cancel a submitted backend job. A page reload can resume tracking without submitting again.
 
 Optional Langfuse tracing setup is documented in [Langfuse](langfuse.md).
+
+
+### Atomic history migration (2026-10-08)
+
+Before deploying the current history backend, apply all migrations through `20261006_atomic_history.sql` in filename order. Saving history requires the new transaction RPC and does not fall back to partial multi-write saves. See [atomic history and local PostgreSQL verification](atomic-history.md). Local tests have not applied this migration to your hosted database.

@@ -104,9 +104,9 @@ begin
     select greatest(0, 100 - coalesce(sum(case f->>'severity'
       when 'high' then 25 when 'medium' then 12 when 'low' then 5 when 'info' then 0 else 8 end), 0))
       into v_score from jsonb_array_elements(v_findings) f
-      where not exists (select 1 from finding_feedback fb where fb.repository_id = v_repository
-        and fb.owner_id = v_owner and fb.fingerprint = f->>'fingerprint'
-        and fb.status in ('ignored', 'false_positive') and (fb.expires_at is null or fb.expires_at > now()));
+      where not exists (select 1 from jsonb_array_elements(v_feedback) fb where fb->>'fingerprint' = f->>'fingerprint'
+        and fb->>'status' in ('ignored', 'false_positive')
+        and (fb->>'expires_at' is null or (fb->>'expires_at')::timestamptz > now()));
     v_report := jsonb_set(v_report, '{finding_feedback}', v_feedback);
     insert into review_runs(repository_id, status, branch, commit_sha, health_score,
         metrics_json, framework_signals_json, report_json, report_markdown, diff_json,
@@ -143,7 +143,7 @@ begin
         end if;
         update review_jobs set status = 'completed', phase = 'completed', error = null,
             completed_at = clock_timestamp(), updated_at = clock_timestamp(),
-            result_json = jsonb_set(p_result - '_pending_history', '{report,finding_feedback}', v_feedback)
+            result_json = jsonb_set(p_result - '_pending_history' - 'markdown', '{report,finding_feedback}', v_feedback)
                           || jsonb_build_object('history', v_result - 'comparison')
         where id = p_job;
     end if;

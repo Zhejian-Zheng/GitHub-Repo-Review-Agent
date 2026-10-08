@@ -39,6 +39,7 @@ repo-review-mcp = "repo_review_agent.mcp_server:main"
 repo-review-pr-bot = "repo_review_agent.pr_bot:main"
 
 [project.optional-dependencies]
+database-test = ["psycopg[binary]>=3.2,<4"]
 langfuse = ["langfuse==4.16.0"]
 openai = ["langchain-openai>=1.0,<2"]
 anthropic = ["langchain-anthropic>=1.0,<2"]

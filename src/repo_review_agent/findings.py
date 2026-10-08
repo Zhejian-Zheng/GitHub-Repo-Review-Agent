@@ -31,24 +31,26 @@ def review_findings(report: ReviewReport) -> list[Finding]:
     candidates = list(report.findings)
     if report.ai_review and report.ai_review.status == "generated":
         for item in report.ai_review.findings:
-            candidates.append(
-                Finding(
-                    title=item["title"],
-                    severity=item["severity"],
-                    category=item.get("category", "code"),
-                    evidence=[item["evidence"]]
-                    if isinstance(item["evidence"], str)
-                    else list(item["evidence"]),
-                    recommendation=item["recommendation"],
-                    evidence_paths=[item["path"]],
-                    source="ai",
-                    path=item["path"],
-                    start_line=item["start_line"],
-                    end_line=item["end_line"],
-                    confidence=item.get("confidence"),
-                    rule_id=item.get("rule_id"),
-                )
+            candidate = Finding(
+                title=item["title"],
+                severity=item["severity"],
+                category=item.get("category", "code"),
+                evidence=[item["evidence"]]
+                if isinstance(item["evidence"], str)
+                else list(item["evidence"]),
+                recommendation=item["recommendation"],
+                evidence_paths=[item["path"]],
+                source="ai",
+                path=item["path"],
+                start_line=item["start_line"],
+                end_line=item["end_line"],
+                confidence=item.get("confidence"),
+                rule_id=item.get("rule_id"),
             )
+            # Persisted canonical findings already carry their original fingerprint.
+            # Rehashing redacted AI evidence would create a second identity.
+            if not any(replace(existing, fingerprint=None) == candidate for existing in candidates):
+                candidates.append(candidate)
     unique = {}
     for finding in candidates:
         fingerprint = finding_fingerprint(finding)

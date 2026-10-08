@@ -4,7 +4,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -446,6 +446,9 @@ def load_report_json(path: Path | None) -> ReviewReport:
         findings=findings,
         ai_review=ai_review,
         finding_feedback=list(data.get("finding_feedback") or []),
+        raw_findings=[Finding(**{f.name: item[f.name] for f in fields(Finding) if f.name in item})
+                      for item in data.get("raw_findings", [])],
+        policy_decisions=list(data.get("policy_decisions") or []),
     )
 
 

@@ -227,7 +227,9 @@ class BaseReviewJobStore:
         except BaseException as exc:
             from .redaction import redact_text
             try:
-                self._set_failed(job_id, redact_text(str(exc)))
+                message = ("Review storage is unavailable. Try again later."
+                           if isinstance(exc, HistoryStoreError) else redact_text(str(exc)))
+                self._set_failed(job_id, message)
             except Exception:
                 # Durable leases expire and are retried by the scheduler after DB recovery.
                 logging.getLogger(__name__).error("Could not persist review failure; lease recovery will retry")
@@ -802,6 +804,12 @@ def _job_from_supabase_row(row: dict[str, Any]) -> ReviewJob:
     result = row.get("result_json")
     if result is not None and not isinstance(result, dict):
         raise HistoryStoreError("Supabase review job result_json must be an object.")
+
+    if result and "history" in result and isinstance(result.get("report"), dict):
+        from .persistence import restore_report
+        result = {**result, "markdown": render_markdown(
+            restore_report(result["report"]),
+            language=(row.get("request_json") or {}).get("report_language", "en"))}
 
     return ReviewJob(
         id=str(row.get("id") or ""),

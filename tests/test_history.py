@@ -411,13 +411,13 @@ class HistoryTests(unittest.TestCase):
             store._request("GET", "repositories")
 
         self.assertIn("400", str(http_context.exception))
-        self.assertIn("bad request", str(http_context.exception))
+        self.assertNotIn("bad request", str(http_context.exception))
 
         mock_urlopen.side_effect = URLError("offline")
         with self.assertRaises(HistoryStoreError) as url_context:
             store._request("GET", "repositories")
 
-        self.assertIn("offline", str(url_context.exception))
+        self.assertNotIn("offline", str(url_context.exception))
 
 
 if __name__ == "__main__":

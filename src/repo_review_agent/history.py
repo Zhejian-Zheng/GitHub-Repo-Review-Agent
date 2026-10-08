@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from .findings import feedback_active, finding_fingerprint
 from .models import Finding, ReviewReport
 from .persistence import history_payload
+from .redaction import redact_data, redact_text
 
 DEFAULT_TIMEOUT = 30
 REVIEW_JOB_COLUMNS = (
@@ -30,6 +31,10 @@ ReviewJobStatus = Literal["queued", "running", "completed", "failed", "cancelled
 
 class HistoryStoreError(RuntimeError):
     pass
+
+
+class HistoryValidationError(HistoryStoreError, ValueError):
+    """Invalid caller input, distinct from unavailable storage."""
 
 
 class HistoryNotFoundError(HistoryStoreError):
@@ -287,9 +292,9 @@ class SupabaseHistoryStore:
         expires_at: str | None = None,
     ) -> dict[str, Any]:
         if status not in {"confirmed", "false_positive", "ignored"}:
-            raise HistoryStoreError("Invalid finding feedback status.")
+            raise HistoryValidationError("Invalid finding feedback status.")
         if not owner_id or not fingerprint or len(reason) > 4000:
-            raise HistoryStoreError(
+            raise HistoryValidationError(
                 "Owner, fingerprint and a reason up to 4000 characters are required."
             )
         if expires_at is not None:
@@ -299,7 +304,7 @@ class SupabaseHistoryStore:
                     raise ValueError("UTC required")
                 expires_at = expiry.astimezone(timezone.utc).isoformat()
             except (ValueError, TypeError, AttributeError) as exc:
-                raise HistoryStoreError("Feedback expiry must be an ISO UTC timestamp.") from exc
+                raise HistoryValidationError("Feedback expiry must be an ISO UTC timestamp.") from exc
         self._get_owned_repository(repository_id=repository_id, owner_id=owner_id)
         runs = self._list_review_runs(repository_id=repository_id, limit=1)
         if not runs or not any(
@@ -312,7 +317,7 @@ class SupabaseHistoryStore:
             "owner_id": owner_id,
             "fingerprint": fingerprint,
             "status": status,
-            "reason": reason,
+            "reason": redact_text(reason),
             "expires_at": expires_at,
             "updated_at": _utc_now(),
         }
@@ -408,10 +413,11 @@ class SupabaseHistoryStore:
             with urlopen(request, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise HistoryStoreError(f"Supabase request failed ({exc.code}): {detail}") from exc
+            raise HistoryStoreError(
+                f"Supabase request failed ({exc.code}). Check credentials and database migrations."
+            ) from exc
         except URLError as exc:
-            raise HistoryStoreError(f"Supabase request failed: {exc.reason}") from exc
+            raise HistoryStoreError("Supabase request failed. Check storage connectivity.") from exc
 
         if not raw.strip():
             return None
@@ -470,9 +476,9 @@ class SupabaseReviewJobStore(SupabaseHistoryStore):
 
     def complete_with_history(self, job_id: str, *, lease_token: str, result: dict) -> None:
         self._request("POST", "rpc/save_review_history", {
-            "p_payload": result["_pending_history"], "p_operation": job_id,
+            "p_payload": redact_data(result["_pending_history"]), "p_operation": job_id,
             "p_job": job_id, "p_lease": lease_token,
-            "p_result": {key: value for key, value in result.items() if key != "_pending_history"},
+            "p_result": redact_data({key: value for key, value in result.items() if key != "_pending_history"}),
         })
 
     def write_claimed_job(
