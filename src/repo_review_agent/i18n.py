@@ -48,10 +48,13 @@ def ai_section_headings(language: str | None) -> list[str]:
 
 
 def localize_report(report: ReviewReport, language: str | None) -> ReviewReport:
+    from .findings import canonicalize_report
+
     language = normalize_report_language(language)
     if language == "en":
         return report
 
+    report = canonicalize_report(report)
     return replace(
         report,
         overview=[_localize_overview_zh(item) for item in report.overview],

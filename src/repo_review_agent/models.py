@@ -34,6 +34,7 @@ class RepositorySnapshot:
     # None supports snapshots constructed by older callers.
     inventory_files: list[RepoFile] | None = None
     inventory_complete: bool = True
+    uninspected_paths: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -86,10 +87,14 @@ class ReviewReport:
     finding_feedback: list[dict[str, Any]] = field(default_factory=list)
     raw_findings: list[Finding] = field(default_factory=list)
     policy_decisions: list[dict[str, Any]] = field(default_factory=list)
+    # Exported reports have one authoritative collection. The AI section remains
+    # available as provenance, but must not recreate findings after presentation.
+    findings_canonical: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         from .findings import review_findings
 
         result = asdict(self)
         result["findings"] = [asdict(item) for item in review_findings(self)]
+        result["findings_canonical"] = True
         return redact_data(result)

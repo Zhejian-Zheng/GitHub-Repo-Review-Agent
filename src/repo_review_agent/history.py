@@ -56,6 +56,7 @@ class FindingSnapshot:
     start_line: int | None = None
     end_line: int | None = None
     confidence: float | None = None
+    resolution_context: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,12 +81,14 @@ class RunComparison:
     new_findings: list[FindingSnapshot]
     existing_findings: list[FindingSnapshot]
     resolved_findings: list[FindingSnapshot]
+    unverified_findings: list[FindingSnapshot] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "new_findings": [finding.to_dict() for finding in self.new_findings],
             "existing_findings": [finding.to_dict() for finding in self.existing_findings],
             "resolved_findings": [finding.to_dict() for finding in self.resolved_findings],
+            "unverified_findings": [finding.to_dict() for finding in self.unverified_findings],
         }
 
     def status_by_fingerprint(self) -> dict[str, str]:
@@ -110,6 +113,7 @@ class HistorySaveResult:
             "new_findings_count": len(self.comparison.new_findings),
             "existing_findings_count": len(self.comparison.existing_findings),
             "resolved_findings_count": len(self.comparison.resolved_findings),
+            "unverified_findings_count": len(self.comparison.unverified_findings),
             "finding_feedback": self.finding_feedback,
         }
 
@@ -270,6 +274,7 @@ class SupabaseHistoryStore:
             "aiReview": ai_review,
             "finding_feedback": feedback,
             "effective_health_score": effective_score,
+            "unverified_findings": (latest_run.get("diff_json") or {}).get("unverified_findings", []),
         }
 
     def _list_finding_feedback(self, repository_id: str, owner_id: str) -> list[dict[str, Any]]:
@@ -638,8 +643,8 @@ def _history_save_result(result: Any) -> HistorySaveResult:
         return HistorySaveResult(
             repository_id=result["repository_id"], review_run_id=result["review_run_id"],
             health_score=int(result["health_score"]),
-            comparison=RunComparison(**{name: [FindingSnapshot(**row) for row in comparison[name]]
-                                       for name in ("new_findings", "existing_findings", "resolved_findings")}),
+            comparison=RunComparison(**{name: [FindingSnapshot(**row) for row in (comparison.get(name, []) if name == "unverified_findings" else comparison[name])]
+                                       for name in ("new_findings", "existing_findings", "resolved_findings", "unverified_findings")}),
             finding_feedback=result.get("finding_feedback", []),
         )
     except (KeyError, TypeError, ValueError) as exc:

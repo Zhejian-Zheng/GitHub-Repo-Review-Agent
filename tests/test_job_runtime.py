@@ -143,11 +143,11 @@ class JobRuntimeTests(unittest.TestCase):
         with TemporaryDirectory() as workspace:
             root = Path(workspace)
             (root / "input.json").write_text(json.dumps({"request": {"target": "."}, "user": {"id": "owner"}}))
-            with patch("repo_review_agent.web.execute_review_request", side_effect=execute):
+            with patch("repo_review_agent.application.execute_review_request", side_effect=execute):
                 main(workspace)
             self.assertEqual(json.loads((root / "output.json").read_text()), {"result": {"report": {}}})
             self.assertEqual((root / "progress").read_text(), "analyzing\n")
-            with patch("repo_review_agent.web.execute_review_request", side_effect=RuntimeError("worker failure")):
+            with patch("repo_review_agent.application.execute_review_request", side_effect=RuntimeError("worker failure")):
                 main(workspace)
             self.assertEqual(json.loads((root / "output.json").read_text()), {"error": "worker failure"})
 
@@ -199,7 +199,7 @@ class JobRuntimeTests(unittest.TestCase):
         storage.claim_job.return_value = None
         store = web.SupabaseBackedReviewJobStore(storage=storage)
         with patch.object(store, "sweep", side_effect=RuntimeError("offline")), \
-                self.assertLogs("repo_review_agent.web", level="ERROR"):
+                self.assertLogs("repo_review_agent.review_jobs", level="ERROR"):
             store.start()
             store.start()
             time.sleep(0.05)

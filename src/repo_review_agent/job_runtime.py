@@ -16,10 +16,12 @@ from pathlib import Path
 
 def run_isolated(request: dict, user: dict | None, *, timeout: float,
                  on_progress: Callable[[str], None] | None = None,
-                 stop: threading.Event | None = None, defer_history: bool = False, cancelled: Callable[[], bool] | None = None, command: list[str] | None = None) -> dict:
+                 stop: threading.Event | None = None, defer_history: bool = False, cancelled: Callable[[], bool] | None = None, command: list[str] | None = None, operation: str = "review") -> dict:
+    if operation not in {"review", "question"}:
+        raise ValueError("Unsupported worker operation.")
     with tempfile.TemporaryDirectory(prefix="repo-review-job-") as workspace:
         root = Path(workspace)
-        (root / "input.json").write_text(json.dumps({"request": request, "user": user, "defer_history": defer_history}), encoding="utf-8")
+        (root / "input.json").write_text(json.dumps({"request": request, "user": user, "defer_history": defer_history, "operation": operation}), encoding="utf-8")
         env = dict(os.environ, TMPDIR=workspace, TEMP=workspace, TMP=workspace)
         # No pipes: a verbose child cannot deadlock the supervisor or exhaust memory.
         proc = subprocess.Popen(command or [sys.executable, "-m", "repo_review_agent.job_runtime", workspace, str(timeout)],
@@ -113,8 +115,12 @@ def run_isolated(request: dict, user: dict | None, *, timeout: float,
 
 
 def main(workspace: str) -> None:
+    from .application import execute_review_request
     from .auth import AuthUser
-    from .web import ReviewRequest, execute_review_request
+    from .env import load_local_env
+    from .requests import ReviewRequest
+
+    load_local_env()
 
     root = Path(workspace)
     payload = json.loads((root / "input.json").read_text(encoding="utf-8"))
@@ -124,9 +130,18 @@ def main(workspace: str) -> None:
             stream.write(phase + "\n")
 
     try:
-        user = AuthUser(**payload["user"]) if payload["user"] else None
-        result = execute_review_request(ReviewRequest(**payload["request"]), user, on_progress=progress,
-                                        **({"defer_history": True} if payload.get("defer_history") else {}))
+        if payload.get("operation", "review") == "question":
+            from .questions import answer_report_question
+            from .requests import ReportQuestionRequest
+            request = ReportQuestionRequest(**payload["request"])
+            result = answer_report_question(
+                request.report, request.question, provider=request.provider,
+                model=request.model, language=request.language, token_budget=request.token_budget,
+            )
+        else:
+            user = AuthUser(**payload["user"]) if payload["user"] else None
+            result = execute_review_request(ReviewRequest(**payload["request"]), user, on_progress=progress,
+                                            **({"defer_history": True} if payload.get("defer_history") else {}))
         output = {"result": result}
     except BaseException as exc:
         from .redaction import redact_text

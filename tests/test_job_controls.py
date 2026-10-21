@@ -221,12 +221,12 @@ class ControlHTTPTests(unittest.TestCase):
 
     def test_ai_success_admits_owner_and_passes_bounded_options(self):
         expected = {'answer': 'Known evidence', 'citations': [], 'limitations': [], 'usage': {}}
-        with patch('repo_review_agent.questions.answer_report_question', return_value=expected) as answer:
+        with patch('repo_review_agent.question_runtime.run_isolated', return_value=expected) as answer:
             response = self.ask(report=self.report, provider='openai', model='test', token_budget=1000)
         self.assertEqual(response.json(), expected)
         self.assertEqual(self.store._daily_usage[(web._utc_now()[:10], 'owner')], 1)
-        self.assertEqual(answer.call_args.kwargs['token_budget'], 1000)
-        self.assertEqual(answer.call_args.kwargs['model'], 'test')
+        self.assertEqual(answer.call_args.args[0]['token_budget'], 1000)
+        self.assertEqual(answer.call_args.args[0]['model'], 'test')
 
     def test_storage_failures_are_sanitized_for_questions_and_cancellation(self):
         from repo_review_agent.history import HistoryStoreError
@@ -319,9 +319,9 @@ class DurableControlTests(unittest.TestCase):
     def test_question_only_usage_prunes_previous_days(self):
         store = web.InMemoryReviewJobStore(daily_limit=1)
         self.addCleanup(store.shutdown)
-        with patch.object(web, '_utc_now', return_value='2026-10-05T00:00:00+00:00'):
+        with patch('repo_review_agent.review_jobs._utc_now', return_value='2026-10-05T00:00:00+00:00'):
             store.admit_question('owner')
-        with patch.object(web, '_utc_now', return_value='2026-10-06T00:00:00+00:00'):
+        with patch('repo_review_agent.review_jobs._utc_now', return_value='2026-10-06T00:00:00+00:00'):
             store.admit_question('owner')
         self.assertEqual(store._daily_usage, {('2026-10-06', 'owner'): 1})
 
@@ -340,6 +340,6 @@ class DurableControlTests(unittest.TestCase):
         def isolated(*args,**kwargs):
             return original(*args,**kwargs,command=[sys.executable,'-c','import time; time.sleep(30)'])
         begin=time.monotonic()
-        with patch('repo_review_agent.web.run_isolated',isolated),self.assertRaisesRegex(RuntimeError,'cancelled'):
+        with patch('repo_review_agent.review_jobs.run_isolated',isolated),self.assertRaisesRegex(RuntimeError,'cancelled'):
             store._execute(web.ReviewRequest(target='.'),AuthUser('owner'))
         self.assertLess(time.monotonic()-begin,1.5)

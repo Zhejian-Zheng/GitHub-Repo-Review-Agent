@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -38,7 +39,9 @@ def collect_linter_findings(
 
     findings: list[Finding] = []
     if _has_python_sources(snapshot):
-        findings.extend(ruff_findings(root, timeout=timeout))
+        findings.extend(ruff_findings(root, timeout=timeout, paths=[
+            file.path for file in snapshot.files if file.suffix in {".py", ".pyi"}
+        ]))
     return findings
 
 
@@ -47,9 +50,10 @@ def ruff_findings(
     *,
     timeout: float = RUFF_TIMEOUT,
     max_findings: int = RUFF_MAX_FINDINGS,
+    paths: list[str] | None = None,
 ) -> list[Finding]:
     try:
-        diagnostics = _run_ruff(root, timeout=timeout)
+        diagnostics = _run_ruff(root, timeout=timeout, paths=paths)
     except LinterUnavailable as exc:
         return [Finding("Ruff check unavailable", "info", "tool status", [str(exc)],
                         "Restore Ruff and rerun the check; no clean result was established.",
@@ -110,7 +114,22 @@ class LinterUnavailable(RuntimeError):
     """A missing or failed tool is not a clean review."""
 
 
-def _run_ruff(root: Path, *, timeout: float) -> list:
+def _run_ruff(root: Path, *, timeout: float, paths: list[str] | None = None) -> list:
+    if paths == []:
+        return []
+    if paths is not None:
+        deadline = time.monotonic() + timeout
+        diagnostics = []
+        for offset in range(0, len(paths), 100):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LinterUnavailable("Ruff could not finish (timed out).")
+            diagnostics.extend(_run_ruff_batch(root, timeout=remaining, paths=paths[offset:offset + 100]))
+        return diagnostics
+    return _run_ruff_batch(root, timeout=timeout, paths=["."])
+
+
+def _run_ruff_batch(root: Path, *, timeout: float, paths: list[str]) -> list:
     executable = shutil.which("ruff")
     if not executable:
         raise LinterUnavailable("Ruff is not installed.")
@@ -127,7 +146,8 @@ def _run_ruff(root: Path, *, timeout: float) -> list:
                 "--exit-zero",
                 "--no-cache",
                 "--quiet",
-                ".",
+                "--",
+                *paths,
             ],
             cwd=str(root),
             capture_output=True,
@@ -221,4 +241,4 @@ def _first_url(diagnostics: list[dict]) -> str:
 def _has_python_sources(snapshot: RepositorySnapshot) -> bool:
     if snapshot.language_counts.get("Python"):
         return True
-    return any(file.suffix == ".py" for file in snapshot.files)
+    return any(file.suffix in {".py", ".pyi"} for file in snapshot.files)

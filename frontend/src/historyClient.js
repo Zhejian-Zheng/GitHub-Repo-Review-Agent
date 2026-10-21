@@ -1,14 +1,15 @@
 import { backendUrl } from "./authClient";
 
-export async function fetchRepositories(accessToken) {
-  const data = await backendRequest("/history/repositories", accessToken);
+export async function fetchRepositories(accessToken, options = {}) {
+  const data = await backendRequest("/history/repositories", accessToken, options);
   return data.repositories || [];
 }
 
-export async function fetchProjectDetail(repositoryId, accessToken) {
+export async function fetchProjectDetail(repositoryId, accessToken, options = {}) {
   const detail = await backendRequest(
     `/history/repositories/${encodeURIComponent(repositoryId)}`,
-    accessToken
+    accessToken,
+    options
   );
   return {
     ...detail,
@@ -16,9 +17,9 @@ export async function fetchProjectDetail(repositoryId, accessToken) {
   };
 }
 
-export function saveFindingFeedback(repositoryId, fingerprint, payload, accessToken) {
+export function saveFindingFeedback(repositoryId, fingerprint, payload, accessToken, options = {}) {
   return backendRequest(`/history/repositories/${encodeURIComponent(repositoryId)}/findings/${encodeURIComponent(fingerprint)}/feedback`, accessToken, {
-    method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" }
+    ...options, method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" }
   });
 }
 

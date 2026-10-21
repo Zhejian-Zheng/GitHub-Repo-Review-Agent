@@ -29,7 +29,7 @@ def finding_fingerprint(finding: Finding) -> str:
 
 def review_findings(report: ReviewReport) -> list[Finding]:
     candidates = list(report.findings)
-    if report.ai_review and report.ai_review.status == "generated":
+    if not report.findings_canonical and report.ai_review and report.ai_review.status == "generated":
         for item in report.ai_review.findings:
             candidate = Finding(
                 title=item["title"],
@@ -56,6 +56,11 @@ def review_findings(report: ReviewReport) -> list[Finding]:
         fingerprint = finding_fingerprint(finding)
         unique.setdefault(fingerprint, replace(finding, fingerprint=fingerprint))
     return list(unique.values())
+
+
+def canonicalize_report(report: ReviewReport) -> ReviewReport:
+    """Capture identity before redaction/localization; accept legacy projections."""
+    return replace(report, findings=review_findings(report), findings_canonical=True)
 
 
 def feedback_active(feedback: dict[str, Any], *, now: datetime | None = None) -> bool:

@@ -4,7 +4,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,7 @@ from .findings import effective_findings
 from .github import GitHubClient, GitHubIntegrationError, ensure_comment_marker
 from .history import calculate_health_score, finding_fingerprint
 from .models import AIReview, Finding, ReviewReport
+from .resolution import finding_rechecked
 
 SEVERITY_RANK = {
     "info": 0,
@@ -30,6 +31,7 @@ class PullRequestReviewDiff:
     existing_findings: list[Finding]
     resolved_findings: list[Finding]
     changed_files: list[dict[str, Any]] | None = None
+    unverified_findings: list[Finding] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +41,7 @@ class PullRequestReviewDiff:
             "new_findings_count": len(self.new_findings),
             "existing_findings_count": len(self.existing_findings),
             "resolved_findings_count": len(self.resolved_findings),
+            "unverified_findings_count": len(self.unverified_findings),
         }
 
 
@@ -81,17 +84,25 @@ def build_pr_review_diff(
         for fingerprint, finding in current_by_fingerprint.items()
         if fingerprint in baseline_by_fingerprint
     ]
-    resolved_findings = [
+    absent_findings = [
         finding
         for fingerprint, finding in baseline_by_fingerprint.items()
         if fingerprint not in current_by_fingerprint
     ]
+    removed_paths = {item['filename'] for item in changed_files or [] if item.get('status') == 'removed'}
+    resolved_findings, unverified_findings = [], []
+    for finding in absent_findings:
+        destination = (resolved_findings if finding_rechecked(
+            finding, current_report, baseline_report, removed_paths=removed_paths)
+            else unverified_findings)
+        destination.append(finding)
     return PullRequestReviewDiff(
         current_report=current_report,
         baseline_report=baseline_report,
         new_findings=new_findings,
         existing_findings=existing_findings,
         resolved_findings=resolved_findings,
+        unverified_findings=unverified_findings,
         changed_files=changed_files,
     )
 
@@ -236,6 +247,7 @@ def build_pr_bot_comment(
         f"- New findings: `{len(review_diff.new_findings)}`",
         f"- Existing findings: `{len(review_diff.existing_findings)}`",
         f"- Resolved findings: `{len(review_diff.resolved_findings)}`",
+        f"- Not reverified: `{len(review_diff.unverified_findings)}`",
     ]
     if fail_on_severity:
         lines.append(f"- CI guard: blocks `{fail_on_severity}` or higher findings.")
@@ -257,6 +269,11 @@ def build_pr_bot_comment(
     else:
         lines.append("- No previously detected findings were resolved in this diff.")
 
+    if review_diff.unverified_findings:
+        lines.extend(["", "### Not reverified", "",
+                      "These earlier findings were not fully rechecked; absence does not establish a fix."])
+        for finding in review_diff.unverified_findings:
+            lines.append(f"- **{finding.severity.upper()}**: {finding.title}")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -275,7 +292,7 @@ def blocking_findings(
         else _incremental_findings(
             _actionable_findings(effective_findings(review_diff.current_report)),
             review_diff.changed_files,
-        )
+        ) + review_diff.unverified_findings
     )
     return [
         finding for finding in candidates if SEVERITY_RANK.get(finding.severity, 0) >= threshold
@@ -397,6 +414,8 @@ def run_pr_bot(
 
 
 def load_report_json(path: Path | None) -> ReviewReport:
+    from .findings import canonicalize_report
+
     if path is None:
         raise GitHubIntegrationError("Report JSON path is required.")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -437,7 +456,7 @@ def load_report_json(path: Path | None) -> ReviewReport:
             findings=list(ai_review_data.get("findings") or []),
         )
 
-    return ReviewReport(
+    return canonicalize_report(ReviewReport(
         repo_name=data.get("repo_name", path.stem),
         generated_at=data.get("generated_at", ""),
         overview=list(data.get("overview") or []),
@@ -449,7 +468,8 @@ def load_report_json(path: Path | None) -> ReviewReport:
         raw_findings=[Finding(**{f.name: item[f.name] for f in fields(Finding) if f.name in item})
                       for item in data.get("raw_findings", [])],
         policy_decisions=list(data.get("policy_decisions") or []),
-    )
+        findings_canonical=data.get("findings_canonical") is True,
+    ))
 
 
 def main(argv: list[str] | None = None) -> int:

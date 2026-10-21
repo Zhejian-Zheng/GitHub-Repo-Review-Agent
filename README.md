@@ -630,4 +630,15 @@ Review jobs support owner cancellation and daily admission quotas. AI reviews sh
 
 Use `--changed-files-json pr-files.json` to prioritize PR changes during review, then generate GitHub Checks annotations with the PR bot's dry-run/create modes. Configure project rules through `.repo-review.json`. Run the labeled quality dataset with `repo-review-evaluate` and optionally send numeric evaluation scores to Langfuse.
 
+Before deploying the coverage-aware history update, apply `supabase/migrations/20261008_resolution_coverage.sql` after the atomic-history migration; see [migration details](docs/atomic-history.md). Partial scans now retain absent findings as unverified instead of claiming they were resolved.
+
 See the [feature guide](docs/feature-expansion.md), [evaluation guide](docs/evaluation.md), and [next improvement review](docs/next-improvements.md). New deployments must apply both `20261005` migrations after the job lease migration.
+
+### Reliability and maintenance updates
+
+- [Completion record and verification for the six reliability improvements](docs/reliability-and-maintainability-2026-10-20.md)
+- [Question concurrency, rate limits and required database migration](docs/question-capacity.md)
+- [Locked Python dependencies and compatibility checks](docs/reproducible-builds.md)
+- [Code-defect evaluation and human review](docs/evaluation.md#code-defect-benchmark-and-human-review)
+
+Application inputs and review execution live in `requests.py` and `application.py`; repository acquisition and background scheduling are independent of the HTTP module. The frontend separates authentication, history and job lifecycles into hooks and renders features from dedicated components. Serialized reports use a canonical findings collection so localization and redaction do not invalidate feedback identity.

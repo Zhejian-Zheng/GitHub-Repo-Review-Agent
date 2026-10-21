@@ -31,7 +31,7 @@ export function cancelReviewJob(jobId, accessToken, options = {}) {
   return request(`/review/jobs/${encodeURIComponent(jobId)}/cancel`, { ...options, method: "POST", accessToken });
 }
 export function askReportQuestion(payload, accessToken, options = {}) {
-  return request("/review/questions", { ...options, method: "POST", accessToken, body: payload });
+  return request("/review/questions", { timeoutMs: 120000, ...options, method: "POST", accessToken, body: payload });
 }
 export function fetchReviewJob(jobId, accessToken, options = {}) {
   return request(`/review/jobs/${encodeURIComponent(jobId)}`, { ...options, method: "GET", accessToken });

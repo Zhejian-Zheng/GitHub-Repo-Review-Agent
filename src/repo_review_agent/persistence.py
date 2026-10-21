@@ -32,12 +32,13 @@ def restore_report(data: dict) -> ReviewReport:
     """Restore a persisted report for presentation, preserving its evidence identity."""
     from dataclasses import fields
 
+    from .findings import canonicalize_report
     from .models import AgentStep, AIReview, Finding
 
     def construct(cls, value):
         return cls(**{f.name: value[f.name] for f in fields(cls) if f.name in value})
 
-    return ReviewReport(
+    return canonicalize_report(ReviewReport(
         repo_name=data.get("repo_name", "repository"),
         generated_at=data.get("generated_at", ""),
         overview=data.get("overview", []),
@@ -49,4 +50,5 @@ def restore_report(data: dict) -> ReviewReport:
         ai_review=construct(AIReview, data["ai_review"]) if data.get("ai_review") else None,
         agent_trace=[construct(AgentStep, step) for step in data.get("agent_trace") or []],
         finding_feedback=data.get("finding_feedback", []),
-    )
+        findings_canonical=data.get("findings_canonical") is True,
+    ))

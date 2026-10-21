@@ -60,7 +60,7 @@ class DurableHistoryTests(unittest.TestCase):
 
         with (
             TemporaryDirectory() as tmp,
-            patch("repo_review_agent.web.run_review_for_path", return_value=sample_report()),
+            patch("repo_review_agent.application.run_review_for_path", return_value=sample_report()),
             patch(
                 "repo_review_agent.web.SupabaseHistoryStore.from_env",
                 side_effect=AssertionError("worker must not save"),

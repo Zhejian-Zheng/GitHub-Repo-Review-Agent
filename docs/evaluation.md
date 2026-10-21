@@ -34,3 +34,26 @@ Recall measures required titles found; precision measures found titles inside th
 The command returns nonzero when recall is below `--min-recall` (default 1), any forbidden title occurs, or an explicitly requested AI review fails. `--min-precision` requires exhaustive labels and fails when precision is unavailable. CI runs the bundled offline dataset as a separate quality gate.
 
 With the existing Langfuse enable flag/credentials, the runner creates a parent evaluation trace and queues known aggregate numeric scores for it. Model/tool traces nest below it. No dataset ID, path, input, label text, source, report or arbitrary comments are sent as score metadata. Delivery remains best effort; `langfuse_scores_queued` means accepted by the SDK, not confirmed by the remote server. See [Langfuse setup](langfuse.md) and its [Scores API](https://langfuse.com/docs/evaluation/evaluation-methods/scores-via-sdk).
+
+## Code-defect benchmark and human review
+
+`tests/fixtures/semantic/dataset.json` separates six small, inspectable code cases from the hygiene goldens: zero division and its guarded counterpart, interpolated and parameterized SQL, a cross-file path traversal, and a clean project containing an adversarial README instruction. Labels describe the defect and acceptable repository-relative evidence ranges. These are curated synthetic cases, not a claim of broad production-code accuracy.
+
+Run the hygiene suite offline with complete labels:
+
+```sh
+repo-review-evaluate tests/fixtures/evaluation/dataset.json --min-precision 1
+```
+
+Run the code benchmark explicitly with your configured provider (this makes paid/network model calls):
+
+```sh
+repo-review-evaluate tests/fixtures/semantic/dataset.json --provider openai --repeats 3 \
+  --min-location-recall 0.8 --min-location-precision 0.8 --output semantic-results.json
+```
+
+Use an explicit model for comparisons. Keep the output's dataset hash, model, trial, latency and actual token usage; missing provider usage remains unknown. Review candidates are exported with the labels so a human can independently inspect each claim against the source. Never execute the fixture instructions or treat the adversarial README as instructions to the evaluator.
+
+`evidence_location_precision` and `evidence_location_recall` match valid exact quotes to bounded labeled ranges, one candidate per defect. Duplicate claims, invented quotes and wrong files do not improve the score. These are evidence-location metrics, **not semantic correctness**: a wrong claim can quote the right line. `semantic_precision` and `semantic_recall` remain null until independently adjudicated outside this automatic scorer.
+
+For human adjudication, record for each candidate: case/trial, candidate fingerprint, true defect or false positive, matching label ID (if any), and a short reasoning note. Count each expected defect at most once for recall, and include every claim in the precision denominator. Inspect the entire cross-file flow; on clean cases, any claimed code defect needs a documented label correction or counts as a false positive. Review provider failures separately from missed defects. The existing two hygiene fixtures now include exhaustive acceptable titles, so their precision is meaningful for that small dataset only.

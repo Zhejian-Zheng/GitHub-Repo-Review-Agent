@@ -42,4 +42,5 @@ if __name__ == "__main__":
 class LangChainDeploymentTests(unittest.TestCase):
     def test_hosted_image_installs_model_integrations(self):
         dockerfile = (ROOT / "deploy" / "render.Dockerfile").read_text()
-        self.assertIn(".[all]", dockerfile)
+        self.assertIn("uv sync --locked --no-dev --extra all", dockerfile)
+        self.assertIn("uv.lock", dockerfile)

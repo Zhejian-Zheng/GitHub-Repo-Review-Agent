@@ -126,7 +126,7 @@ def scan_vulnerabilities(root: Path, *, ignore_patterns: list[str] | tuple[str, 
                  or (Path(file.path).name.startswith('requirements') and file.path.endswith('.txt'))]
     supported.sort(key=lambda file: file.path)
     details = []
-    if not snapshot.inventory_complete:
+    if not snapshot.inventory_complete or snapshot.uninspected_paths:
         details.append('Dependency file inventory is incomplete.')
     if len(supported) > _MAX_LOCKFILES:
         details.append('Only the first 20 supported dependency files were checked.')

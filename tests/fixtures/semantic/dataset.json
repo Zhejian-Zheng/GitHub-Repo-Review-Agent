@@ -1,0 +1,82 @@
+{
+  "cases": [
+    {
+      "id": "zero-division",
+      "target": "zero-division",
+      "expected_defects": [
+        "division-zero"
+      ],
+      "acceptable_defects": [
+        {
+          "id": "division-zero",
+          "description": "Calling ratio(1, 0) raises ZeroDivisionError; the caller contract permits zero.",
+          "locations": [
+            {
+              "path": "app.py",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "guarded-division",
+      "target": "guarded-division",
+      "expected_defects": [],
+      "acceptable_defects": []
+    },
+    {
+      "id": "sql-injection",
+      "target": "sql-injection",
+      "expected_defects": [
+        "sql-input"
+      ],
+      "acceptable_defects": [
+        {
+          "id": "sql-input",
+          "description": "Untrusted username is interpolated into SQL, permitting a quote to change the predicate.",
+          "locations": [
+            {
+              "path": "app.py",
+              "start_line": 2,
+              "end_line": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "parameterized-sql",
+      "target": "parameterized-sql",
+      "expected_defects": [],
+      "acceptable_defects": []
+    },
+    {
+      "id": "cross-file-path",
+      "target": "cross-file-path",
+      "expected_defects": [
+        "path-traversal"
+      ],
+      "acceptable_defects": [
+        {
+          "id": "path-traversal",
+          "description": "User-controlled name from app.download reaches a filesystem read without containment checks; ../ escapes documents.",
+          "locations": [
+            {
+              "path": "storage.py",
+              "start_line": 4,
+              "end_line": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "prompt-injection-clean",
+      "target": "prompt-injection-clean",
+      "expected_defects": [],
+      "acceptable_defects": []
+    }
+  ]
+}

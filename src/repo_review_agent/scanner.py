@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import stat
 from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from .config import path_is_ignored
@@ -123,8 +125,10 @@ def scan_repository(
     inventory: list[RepoFile] = []
     skipped_file_paths: list[str] = []
     walk_errors: list[OSError] = []
+    uninspected_paths: list[str] = []
 
-    for path in _iter_files(root, onerror=walk_errors.append, ignore_patterns=ignore_patterns):
+    for path in _iter_files(root, onerror=walk_errors.append, ignore_patterns=ignore_patterns,
+                            onexcluded=uninspected_paths.append):
         rel_path = _relative_path(root, path)
         try:
             metadata = path.lstat()
@@ -133,6 +137,7 @@ def scan_repository(
             skipped_file_paths.append(rel_path)
             continue
         if not stat.S_ISREG(metadata.st_mode):
+            uninspected_paths.append(rel_path)
             continue
         suffix = path.suffix.lower()
         language = LANGUAGE_BY_SUFFIX.get(suffix)
@@ -186,11 +191,17 @@ def scan_repository(
         total_size_bytes=sum(file.size_bytes for file in files),
         skipped_files=len(skipped_file_paths), skipped_file_paths=skipped_file_paths,
         inventory_files=inventory, inventory_complete=not walk_errors,
+        uninspected_paths=uninspected_paths,
     )
 
 
-def _iter_files(root: Path, *, onerror=None, ignore_patterns=()):
+def _iter_files(root: Path, *, onerror=None, ignore_patterns=(), onexcluded=None):
     for dirpath, dirnames, filenames in os.walk(root, onerror=onerror, followlinks=False):
+        if onexcluded:
+            for name in dirnames + filenames:
+                path = Path(dirpath) / name
+                if path.is_symlink():
+                    onexcluded(_relative_path(root, path))
         dirnames[:] = sorted(
             name for name in dirnames
             if name not in EXCLUDED_DIRS and not (Path(dirpath) / name).is_symlink()
@@ -226,6 +237,7 @@ def _classify_file(rel_path: str, name: str, language: str | None) -> str:
     if (
         lower_name.startswith("test_")
         or lower_name.endswith("_test.py")
+        or lower_name.endswith((".test.js", ".test.jsx", ".spec.js", ".spec.jsx"))
         or lower_name.endswith(".test.ts")
         or lower_name.endswith(".test.tsx")
         or lower_name.endswith(".spec.ts")
@@ -245,9 +257,26 @@ def _classify_file(rel_path: str, name: str, language: str | None) -> str:
     return "other"
 
 
+_INCOMPLETE_READS: ContextVar[set[str] | None] = ContextVar('incomplete_reads', default=None)
+
+
+@contextmanager
+def track_incomplete_reads():
+    incomplete: set[str] = set()
+    token = _INCOMPLETE_READS.set(incomplete)
+    try:
+        yield incomplete
+    finally:
+        _INCOMPLETE_READS.reset(token)
+
+
 def read_text_file(root: Path, rel_path: str, *, limit: int = 60_000) -> str:
     root = root.resolve()
     candidate = root / rel_path
+    incomplete = _INCOMPLETE_READS.get()
+    previously_incomplete = incomplete is not None and rel_path in incomplete
+    if incomplete is not None:
+        incomplete.add(rel_path)
     try:
         relative = candidate.relative_to(root)
         if ".." in relative.parts:
@@ -260,6 +289,9 @@ def read_text_file(root: Path, rel_path: str, *, limit: int = 60_000) -> str:
         if not candidate.is_file():
             return ""
         with candidate.open("r", encoding="utf-8", errors="replace") as stream:
-            return stream.read(max(0, limit))
+            text = stream.read(max(0, limit))
+            if incomplete is not None and not previously_incomplete and text.strip() and len(text) < limit:
+                incomplete.discard(rel_path)
+            return text
     except (OSError, ValueError):
         return ""

@@ -257,7 +257,7 @@ class WebAPITests(unittest.TestCase):
         middleware_classes = [middleware.cls.__name__ for middleware in app.user_middleware]
         self.assertIn("CORSMiddleware", middleware_classes)
 
-    @patch("repo_review_agent.web.SupabaseReviewJobStore")
+    @patch("repo_review_agent.review_jobs.SupabaseReviewJobStore")
     def test_build_review_job_store_can_use_supabase(self, mock_storage_class) -> None:
         from repo_review_agent.web import SupabaseBackedReviewJobStore, build_review_job_store
 
@@ -271,7 +271,7 @@ class WebAPITests(unittest.TestCase):
         self.assertIsInstance(store, SupabaseBackedReviewJobStore)
         mock_storage_class.from_env.assert_called_once()
 
-    @patch("repo_review_agent.web.SupabaseReviewJobStore")
+    @patch("repo_review_agent.review_jobs.SupabaseReviewJobStore")
     def test_build_review_job_store_auto_uses_supabase_when_configured(
         self,
         mock_storage_class,
@@ -510,7 +510,7 @@ class WebAPITests(unittest.TestCase):
 
     @patch("repo_review_agent.web.BaseReviewJobStore._execute",
            side_effect=lambda request, user, *args: __import__("repo_review_agent.web", fromlist=["execute_review_request"]).execute_review_request(request, user))
-    @patch("repo_review_agent.web.SupabaseHistoryStore")
+    @patch("repo_review_agent.application.SupabaseHistoryStore")
     @patch("repo_review_agent.web.get_supabase_user")
     def test_review_endpoint_saves_history_for_authenticated_user(
         self,
@@ -785,8 +785,8 @@ class WebAPITests(unittest.TestCase):
         from repo_review_agent.web import ReviewRequest, execute_review_request
 
         with (
-            patch("repo_review_agent.web.resolve_target") as mock_resolve_target,
-            patch("repo_review_agent.web.run_review_for_path") as mock_run_review,
+            patch("repo_review_agent.application.resolve_target") as mock_resolve_target,
+            patch("repo_review_agent.application.run_review_for_path") as mock_run_review,
             self.assertRaises(PermissionError),
         ):
             mock_resolve_target.return_value.__enter__.return_value = Path(".")

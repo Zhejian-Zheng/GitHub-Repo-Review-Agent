@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .linters import collect_linter_findings
 from .models import Finding, RepositorySnapshot, ReviewReport
-from .scanner import read_text_file, scan_repository
+from .scanner import read_text_file, scan_repository, track_incomplete_reads
 
 SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*['\"][^'\"]{12,}['\"]"),
@@ -121,14 +121,32 @@ def analyze_snapshot(
     *,
     run_linters: bool = False,
 ) -> ReviewReport:
-    framework_signals = detect_framework_signals(snapshot, root)
-    findings = build_findings(snapshot, root, run_linters=run_linters)
+    with track_incomplete_reads() as incomplete_reads:
+        framework_signals = detect_framework_signals(snapshot, root)
+        findings = build_findings(snapshot, root, run_linters=run_linters)
+    inventory = snapshot.inventory_files if snapshot.inventory_files is not None else snapshot.files
+    inventory_complete = (snapshot.inventory_complete and not snapshot.uninspected_paths
+                          and len(inventory) <= 10_000)
+    # Internal rule caps are deliberately conservative: absence beyond a cap is unknown.
+    complete = (inventory_complete and not snapshot.skipped_files and not incomplete_reads
+                and len(snapshot.files) <= 250
+                and sum(f.path.lower().endswith('dockerfile') for f in snapshot.files) <= 3
+                and not any(f.title == 'Repair malformed package.json' for f in findings))
+    lint_findings = [f for f in findings if 'Ruff' in f.title]
+    coverage = {
+        'version': 1, 'inventory_complete': inventory_complete,
+        'inventory_paths': [f.path for f in inventory[:10_000]],
+        'rules_complete': complete,
+        'ruff_complete': bool(run_linters and complete and len(lint_findings) < 8
+                              and not any(f.category == 'tool status' for f in lint_findings)),
+    }
 
     return ReviewReport(
         repo_name=snapshot.name,
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         overview=build_overview(snapshot, framework_signals),
         metrics={
+            "review_coverage": coverage,
             "files_scanned": len(snapshot.files),
             "files_skipped": snapshot.skipped_files,
             "inventory_complete": snapshot.inventory_complete,
@@ -559,7 +577,6 @@ def build_docker_quality_findings(snapshot: RepositorySnapshot, root: Path) -> l
                     evidence_paths=[dockerfile],
                 )
             )
-            break
 
     return findings
 

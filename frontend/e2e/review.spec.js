@@ -98,3 +98,121 @@ test("report follow-up renders evidence and submitted model selection", async ({
   expect(payload.token_budget).toBe(20000);
   expect(payload.report.findings.length).toBeGreaterThan(0);
 });
+
+test("late project response cannot overwrite the selected project", async ({ page }) => {
+  await setup(page);
+  await page.route("**/mock-api/history/repositories", route => route.fulfill({ json: { repositories: [
+    { id: "a", repo_name: "Project A", repo_url: "https://github.com/example/a" },
+    { id: "b", repo_name: "Project B", repo_url: "https://github.com/example/b" }
+  ] } }));
+  await page.reload();
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+  let releaseA, startedA;
+  const started = new Promise(resolve => { startedA = resolve; });
+  const delayed = new Promise(resolve => { releaseA = resolve; });
+  const detail = name => ({ latestRun: { health_score: 82 }, findings: [], runs: [], aiReview: { summary: `Evidence belongs to Project ${name}` } });
+  await page.route("**/mock-api/history/repositories/a", async route => { startedA(); await delayed; await route.fulfill({ json: detail("A") }).catch(() => {}); });
+  await page.route("**/mock-api/history/repositories/b", route => route.fulfill({ json: detail("B") }));
+  await page.getByRole("button", { name: "Project A https://github.com/example/a" }).click();
+  await started;
+  await page.getByRole("button", { name: "Project B https://github.com/example/b" }).click();
+  await expect(page.locator(".project-detail-panel")).toContainText("Evidence belongs to Project B");
+  releaseA();
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator(".project-detail-panel")).toContainText("Evidence belongs to Project B");
+  await expect(page.locator(".project-list-item.active")).toContainText("Project B");
+});
+
+test("history distinguishes unverified risks from resolved findings", async ({ page }) => {
+  await setup(page);
+  await page.route("**/mock-api/history/repositories/repo-1", route => route.fulfill({ json: {
+    latestRun: { health_score: 100, resolved_findings_count: 0 }, findings: [], runs: [],
+    unverified_findings: [{ fingerprint: "older", title: "Earlier security risk", severity: "high" }]
+  } }));
+  await page.getByRole("button", { name: "example/project https://github.com/example/project" }).click();
+  await expect(page.locator(".project-detail-panel")).toContainText("Not reverified (1)");
+  await expect(page.locator(".project-detail-panel")).toContainText("Earlier security risk");
+});
+
+test("previous session detail cannot replace a newly signed-in session", async ({ page }) => {
+  await setup(page);
+  let release, started, calls = 0;
+  const requested = new Promise(resolve => { started = resolve; });
+  const delayed = new Promise(resolve => { release = resolve; });
+  await page.route("**/mock-api/history/repositories/repo-1", async route => {
+    const old = ++calls === 1;
+    if (old) { started(); await delayed; }
+    await route.fulfill({ json: { latestRun: { health_score: 82 }, findings: [], runs: [], aiReview: { summary: old ? "Old session evidence" : "Current session evidence" } } }).catch(() => {});
+  });
+  await page.getByRole("button", { name: "example/project https://github.com/example/project" }).click();
+  await requested;
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.getByLabel("Email", { exact: true }).fill(user.email);
+  await page.getByLabel("Password", { exact: true }).fill("test-password");
+  await page.locator("button.auth-primary-button").click();
+  await page.getByRole("button", { name: "example/project https://github.com/example/project" }).click();
+  await expect(page.locator(".project-detail-panel")).toContainText("Current session evidence");
+  release();
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator(".project-detail-panel")).toContainText("Current session evidence");
+});
+
+test("saving another finding does not cancel or falsely acknowledge an earlier save", async ({ page }) => {
+  await setup(page);
+  const findings = ["first", "second"].map(fingerprint => ({ fingerprint, title: fingerprint, severity: "high", recommendation: "Fix" }));
+  await page.route("**/mock-api/history/repositories/repo-1", route => route.fulfill({ json: { latestRun: { health_score: 50 }, findings, runs: [] } }));
+  let release, started;
+  const requested = new Promise(resolve => { started = resolve; });
+  const delayed = new Promise(resolve => { release = resolve; });
+  await page.route("**/findings/first/feedback", async route => {
+    started(); await delayed;
+    await route.fulfill({ json: route.request().postDataJSON() }).catch(() => {});
+  });
+  await page.route("**/findings/second/feedback", route => route.fulfill({ json: route.request().postDataJSON() }));
+  await page.getByRole("button", { name: "example/project https://github.com/example/project" }).click();
+  const first = page.locator(".history-finding-card").filter({ has: page.getByRole("heading", { name: "first", exact: true }) });
+  const second = page.locator(".history-finding-card").filter({ has: page.getByRole("heading", { name: "second", exact: true }) });
+  await first.getByRole("button", { name: "Save decision" }).click();
+  await requested;
+  await second.getByRole("button", { name: "Save decision" }).click();
+  await expect(second.getByRole("status")).toHaveText("Decision saved.");
+  await expect(first.getByRole("button", { name: "Save decision" })).toBeDisabled();
+  await expect(first.getByRole("status")).not.toHaveText("Decision saved.");
+  release();
+  await expect(first.getByRole("status")).toHaveText("Decision saved.");
+});
+
+test("history renders populated score trends and AI summaries", async ({ page }) => {
+  await setup(page);
+  await page.route("**/mock-api/history/repositories/repo-1", route => route.fulfill({ json: {
+    latestRun: { health_score: 82 }, findings: [],
+    aiReview: { summary: "## Architecture\nExisting evidence supports this summary." },
+    runs: [{ id: "run-one", created_at: "2026-10-20T08:00:00Z", health_score: 82 }]
+  } }));
+  await page.getByRole("button", { name: "example/project https://github.com/example/project" }).click();
+  await expect(page.locator(".project-detail-panel")).toContainText("Existing evidence supports this summary.");
+  await expect(page.locator(".project-detail-panel")).toContainText("82");
+});
+
+test("hydrating a URL session does not abort the first history load", async ({ page }) => {
+  await page.route("**/mock-auth/auth/v1/user", async route => {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await route.fulfill({ json: user });
+  });
+  await page.route("**/mock-api/history/repositories", async route => {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await route.fulfill({ json: { repositories: [{ id: "repo-1", repo_name: "example/project", repo_url: "https://github.com/example/project" }] } });
+  });
+  await page.goto("/#access_token=token&refresh_token=refresh&expires_in=3600&token_type=bearer");
+  await expect(page.getByRole("button", { name: "Review repository" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /example\/project/ })).toBeVisible();
+});
+
+test("an expired session without a refresh token returns to sign-in", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("repo-review-auth-session", JSON.stringify({ access_token: "expired", expires_at: 1 }));
+  });
+  await page.goto("/");
+  await expect(page.locator(".auth-card")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review repository" })).toHaveCount(0);
+});

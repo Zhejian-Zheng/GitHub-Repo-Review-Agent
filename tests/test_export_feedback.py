@@ -23,7 +23,7 @@ class ExportFeedbackTests(unittest.TestCase):
         fingerprint = review_findings(report)[0].fingerprint
         feedback = [{'fingerprint':fingerprint,'status':'false_positive'}]
         result = HistorySaveResult('repo','run',100,RunComparison([],[],[]),feedback)
-        with TemporaryDirectory() as tmp, patch('repo_review_agent.web.run_review_for_path',return_value=report), patch(
+        with TemporaryDirectory() as tmp, patch('repo_review_agent.application.run_review_for_path',return_value=report), patch(
             'repo_review_agent.web.SupabaseHistoryStore.from_env'
         ) as store:
             store.return_value.save_report.return_value=result

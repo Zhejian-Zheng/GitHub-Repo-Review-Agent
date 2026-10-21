@@ -1,6 +1,6 @@
 # Atomic history persistence
 
-Updated 2026-10-08. History saves now require `supabase/migrations/20261006_atomic_history.sql`, applied **after** migrations 001–004, `20261004_review_job_leases.sql`, `20261005_finding_lifecycle.sql` and `20261005_job_controls.sql`. Run migrations before deploying this version. No remote migration has been applied by this task.
+Updated 2026-10-08. History saves now require `supabase/migrations/20261006_atomic_history.sql`, applied **after** migrations 001–004, `20261004_review_job_leases.sql`, `20261005_finding_lifecycle.sql` and `20261005_job_controls.sql`. Also apply `20261008_resolution_coverage.sql` after `20261006_atomic_history.sql` for coverage-aware resolution. Run migrations before deploying this version. No remote migration has been applied by this task.
 
 `SupabaseHistoryStore.save_report` sends one safe payload to `save_review_history`. A transaction writes the repository, run, findings, AI result and operation receipt. Failed writes leave no partially completed report. Concurrent saves of the same repository are serialized for a consistent comparison baseline; existing owner-scoped unique indexes protect repository creation.
 
@@ -27,3 +27,11 @@ On Homebrew, the script defaults to `/opt/homebrew/opt/postgresql@16/bin`. It cr
 For an already provisioned **disposable** database, set `REPO_REVIEW_TEST_DATABASE_URL` and run `python -m unittest discover -s tests/integration -v`. The database name must end in `_test`. The tests truncate their tables: never supply a production connection. CI uses its own PostgreSQL 16 service and runs the same suite.
 
 The local harness supplies minimal Supabase auth roles/schema for testing PostgreSQL transaction and RLS behavior. It does not emulate the hosted Supabase gateway or test production credentials.
+
+## Coverage-aware finding resolution (2026-10-09)
+
+`20261008_resolution_coverage.sql` replaces the history RPC without removing tables or changing its signature. Apply it before deploying this update. It preserves ownership checks, atomic completion, lease fencing and operation receipts. No remote migration was run during implementation.
+
+An absent fingerprint is now either resolved or unverified. `diff_json.unverified_findings` retains the original finding and its policy/evidence context through subsequent partial runs. A reappearing finding is existing, not new. The result adds `unverified_findings_count`; project detail adds `unverified_findings`. Older operation receipts without those fields remain readable.
+
+Do not roll back to the earlier RPC while relying on this guarantee: it treats absence as resolution and will not carry unverified findings forward. Existing records incorrectly marked resolved before this migration are not retroactively rewritten.
