@@ -35,7 +35,7 @@ export function buildDemoReport(language) {
       "GitHub Pages": [".github/workflows/pages.yml"],
       Supabase: ["supabase/schema.sql", "supabase/verify_history_schema.sql"],
       MCP: ["src/repo_review_agent/mcp_server.py"],
-      "Function Calling": ["src/repo_review_agent/function_agent.py"]
+      "LangChain": ["src/repo_review_agent/agent.py", "src/repo_review_agent/review_tools.py"]
     },
     ai_review: {
       provider: "openrouter",

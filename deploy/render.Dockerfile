@@ -13,10 +13,12 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 
-RUN python -m pip install --no-cache-dir ".[web]"
+COPY --from=ghcr.io/astral-sh/uv:0.10.12 /uv /usr/local/bin/uv
+RUN uv sync --locked --no-dev --extra all --no-editable
+ENV PATH="/app/.venv/bin:$PATH"
 
 USER app
 

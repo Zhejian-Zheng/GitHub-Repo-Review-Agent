@@ -7,7 +7,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/review": "http://localhost:8000"
+      "/review": "http://localhost:8000",
+      "/history": "http://localhost:8000"
     }
   }
 });

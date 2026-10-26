@@ -11,8 +11,8 @@ The frontend can always show the built-in sample report through `Demo`. Signed-i
 ## 1. Prepare Supabase
 
 1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the SQL Editor. For an existing project, run the migrations in `supabase/migrations`, including `003_review_jobs.sql` and `004_table_privileges.sql`.
-3. Run `supabase/verify_history_schema.sql`; every row should return `status = pass`.
+2. Run `supabase/schema.sql` in the SQL Editor, then apply every file in `supabase/migrations` in filename order. For an existing project, apply every missing migration, including `20261004_review_job_leases.sql`, both `20261005` migrations, `20261006_atomic_history.sql`, `20261008_resolution_coverage.sql`, `20261020_question_capacity.sql`, `20261021_resolution_elided_paths.sql`, and `20261023_inventory_rule_coverage.sql`. `schema.sql` alone is not sufficient for the current backend.
+3. Run `supabase/verify_history_schema.sql`; every row should return `status = pass`. It checks the job lease columns, lifecycle/feedback tables, atomic history RPCs and question capacity RPCs.
 4. In Auth settings, enable Email provider.
 5. Open **Authentication -> URL Configuration**.
 6. Set **Site URL** to your deployed frontend:
@@ -109,3 +109,7 @@ https://zhejian-zheng.github.io/GitHub-Repo-Review-Agent/
 ## Demo Account
 
 The safest public setup is self-service Supabase email/password sign-up plus the built-in `Demo` button. If you want a shared test account for portfolio reviewers, create it in Supabase Auth and share it outside the repository. Do not commit test credentials.
+
+## LangChain provider dependencies
+
+The application uses LangChain 1.x and LangGraph 1.x. Both Docker images install the `all` extra, including OpenAI/OpenRouter, Anthropic and Ollama integrations. For a manual deployment install `python -m pip install -e ".[web,openai]"` or `.[all]` before enabling a provider. Rules-only runs still work without model credentials. Agent mode requires a model that supports tools; provider failures appear in the AI status while the baseline report remains available.

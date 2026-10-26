@@ -224,6 +224,16 @@ class GitHubIntegrationTests(unittest.TestCase):
         client.update_issue_comment.assert_called_once()
         client.create_issue_comment.assert_not_called()
 
+    def test_list_issue_comments_fetches_later_pages_for_sticky_comment_lookup(self) -> None:
+        client = GitHubClient(token="token")
+        first_page = [{"id": index} for index in range(100)]
+        with patch.object(client, "_request_list", side_effect=[first_page, [{"id": 100}]]) as request:
+            comments = client.list_issue_comments("owner/repo", 12)
+
+        self.assertEqual(len(comments), 101)
+        self.assertEqual(request.call_count, 2)
+        self.assertIn("page=2", request.call_args.args[1])
+
     def test_upsert_issue_comment_creates_when_marker_is_missing(self) -> None:
         client = GitHubClient(token="token")
         client.list_issue_comments = MagicMock(return_value=[])  # type: ignore[method-assign]

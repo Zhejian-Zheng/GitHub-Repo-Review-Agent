@@ -1464,3 +1464,17 @@
     grid-auto-columns: minmax(38px, 1fr);
   }
 }
+.review-options { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:1rem; font-size:.85rem; margin:1rem 0; color:#475569; }
+.review-options label { display:flex; align-items:center; gap:.5rem; }
+.review-options input[type=number] { width:7rem; border:1px solid #cbd5e1; border-radius:.4rem; padding:.3rem; }
+.finding-feedback { display:flex; flex-wrap:wrap; align-items:end; gap:.5rem; margin-top:.75rem; }
+.finding-feedback label { display:flex; flex-direction:column; gap:.25rem; font-size:.75rem; }
+.finding-feedback input,.finding-feedback select,.finding-feedback button { border:1px solid #cbd5e1; border-radius:.3rem; padding:.4rem; max-width:100%; background:white; }
+.finding-feedback small { flex-basis:100%; }
+.report-questions { margin-top:1rem; border:1px solid #e2e8f0; border-radius:.75rem; background:white; padding:1.5rem; }
+.report-questions form label { display:flex; flex-direction:column; gap:.5rem; }
+.report-questions textarea { min-height:5rem; width:100%; border:1px solid #cbd5e1; border-radius:.4rem; padding:.75rem; }
+.report-questions button { margin-top:.5rem; padding:.5rem 1rem; border:1px solid #cbd5e1; border-radius:.4rem; }
+.report-question-answer { margin-top:1rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+.report-question-answer blockquote { border-left:3px solid #94a3b8; margin:1rem 0; padding-left:1rem; }
+.report-question-answer pre { white-space:pre-wrap; }

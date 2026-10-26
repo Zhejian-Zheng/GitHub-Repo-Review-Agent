@@ -1,5 +1,8 @@
 -- GitHub Repo Review Agent history schema.
--- Run this in the Supabase SQL Editor before using `repo-review --save-history`.
+-- This is the legacy bootstrap schema. It does not contain the job-lease,
+-- finding-lifecycle, atomic-history, resolution-coverage or question-capacity
+-- changes. After running it, apply every file in supabase/migrations in
+-- filename order, then run supabase/verify_history_schema.sql.
 -- The CLI/server should use SUPABASE_SERVICE_ROLE_KEY. Never expose that key in browser code.
 
 create extension if not exists pgcrypto;

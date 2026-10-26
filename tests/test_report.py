@@ -3,10 +3,59 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from repo_review_agent.models import AgentStep, AIReview, Finding, ReviewReport
-from repo_review_agent.report import render_markdown, write_json, write_markdown
+from repo_review_agent.report import public_report_dict, render_markdown, write_json, write_markdown
 
 
 class ReportRenderingTests(unittest.TestCase):
+    def test_public_report_dict_strips_inventory_paths_without_mutating_source(self) -> None:
+        metrics = {
+            "files_scanned": 2,
+            "review_coverage": {
+                "version": 1,
+                "inventory_complete": True,
+                "inventory_paths": ["src/a.py", "src/b.py"],
+                "rules_complete": True,
+            },
+        }
+        report = ReviewReport(
+            repo_name="example",
+            generated_at="2026-05-28T00:00:00+00:00",
+            overview=[],
+            metrics=metrics,
+            framework_signals={},
+            findings=[],
+        )
+
+        public = public_report_dict(report)
+
+        coverage = public["metrics"]["review_coverage"]
+        self.assertNotIn("inventory_paths", coverage)
+        self.assertEqual(coverage["inventory_file_count"], 2)
+        self.assertTrue(coverage["inventory_paths_elided"])
+        self.assertTrue(coverage["inventory_complete"])
+        self.assertIn("inventory_paths", report.metrics["review_coverage"])
+
+    def test_public_report_dict_keeps_explicitly_empty_inventory_distinct(self) -> None:
+        report = ReviewReport(
+            repo_name="empty",
+            generated_at="2026-05-28T00:00:00+00:00",
+            overview=[],
+            metrics={"review_coverage": {
+                "version": 1,
+                "inventory_complete": True,
+                "inventory_paths": [],
+                "rules_complete": True,
+            }},
+            framework_signals={},
+            findings=[],
+        )
+
+        coverage = public_report_dict(report)["metrics"]["review_coverage"]
+
+        self.assertEqual(coverage["inventory_paths"], [])
+        self.assertEqual(coverage["inventory_file_count"], 0)
+        self.assertNotIn("inventory_paths_elided", coverage)
+
     def test_render_markdown_supports_chinese(self) -> None:
         report = ReviewReport(
             repo_name="example",

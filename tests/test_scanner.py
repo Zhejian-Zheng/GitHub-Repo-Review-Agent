@@ -1,11 +1,48 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from repo_review_agent.scanner import _relative_path, read_text_file, scan_repository
 
 
 class ScannerTests(unittest.TestCase):
+    def test_inventory_survives_content_cap_and_counts_all_omissions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("a.py", "b.py", "c.py", "README.md", "LICENSE", "package.json"):
+                (root / name).write_text("{}", encoding="utf-8")
+            snapshot = scan_repository(root, max_files=1)
+        self.assertEqual(snapshot.skipped_files, 5)
+        self.assertEqual(len(snapshot.inventory_files), 6)
+        self.assertEqual(snapshot.files[0].path, "README.md")
+        self.assertIn("package.json", snapshot.dependency_files)
+
+    def test_symlinks_are_not_scanned_or_read(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "real.py").write_text("secret", encoding="utf-8")
+            (root / "link.py").symlink_to(root / "real.py")
+            snapshot = scan_repository(root)
+            self.assertEqual(read_text_file(root, "link.py"), "")
+        self.assertNotIn("link.py", [file.path for file in snapshot.files])
+
+    def test_text_read_is_bounded_without_read_text(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "large.txt").write_text("a" * 100000, encoding="utf-8")
+            with patch.object(Path, "read_text", side_effect=AssertionError("unbounded read")):
+                self.assertEqual(read_text_file(root, "large.txt", limit=3), "aaa")
+
+    def test_unreadable_top_level_marks_inventory_incomplete(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.object(Path, "iterdir", side_effect=PermissionError("denied")),
+        ):
+            snapshot = scan_repository(Path(tmp))
+        self.assertFalse(snapshot.inventory_complete)
+        self.assertEqual(snapshot.top_level_items, [])
+
     def test_scan_repository_classifies_common_files(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -69,7 +106,7 @@ class ScannerTests(unittest.TestCase):
             [file.path for file in snapshot.files],
             [".gitignore", "LICENSE", "README.md", "src/app.py"],
         )
-        self.assertEqual([file.path for file in limited_snapshot.files], [".gitignore", "LICENSE"])
+        self.assertEqual([file.path for file in limited_snapshot.files], ["LICENSE", "README.md"])
 
     def test_scan_repository_classifies_many_file_kinds(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -147,6 +184,29 @@ class ScannerTests(unittest.TestCase):
             (Path(tmp) / "secret.txt").write_text("top secret", encoding="utf-8")
 
             self.assertEqual(read_text_file(root, "../secret.txt"), "")
+
+    def test_disappearing_file_marks_inventory_incomplete(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            with patch('repo_review_agent.scanner._iter_files', return_value=iter([root / 'gone.py'])):
+                snapshot = scan_repository(root)
+            self.assertFalse(snapshot.inventory_complete)
+            self.assertIn('gone.py', snapshot.skipped_file_paths)
+
+    def test_special_files_are_skipped_and_read_errors_are_isolated(self):
+        import stat
+        from types import SimpleNamespace
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / 'named-pipe'
+            with patch('repo_review_agent.scanner._iter_files', return_value=iter([path])), patch.object(
+                Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFIFO)
+            ):
+                self.assertEqual(scan_repository(root).files, [])
+            (root / 'app.py').write_text('print(1)')
+            with patch.object(Path, 'open', side_effect=PermissionError):
+                self.assertEqual(read_text_file(root, 'app.py'), '')
 
 
 if __name__ == "__main__":

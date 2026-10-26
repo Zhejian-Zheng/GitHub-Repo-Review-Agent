@@ -1,14 +1,15 @@
 import { backendUrl } from "./authClient";
 
-export async function fetchRepositories(accessToken) {
-  const data = await backendRequest("/history/repositories", accessToken);
+export async function fetchRepositories(accessToken, options = {}) {
+  const data = await backendRequest("/history/repositories", accessToken, options);
   return data.repositories || [];
 }
 
-export async function fetchProjectDetail(repositoryId, accessToken) {
+export async function fetchProjectDetail(repositoryId, accessToken, options = {}) {
   const detail = await backendRequest(
     `/history/repositories/${encodeURIComponent(repositoryId)}`,
-    accessToken
+    accessToken,
+    options
   );
   return {
     ...detail,
@@ -16,21 +17,29 @@ export async function fetchProjectDetail(repositoryId, accessToken) {
   };
 }
 
-async function backendRequest(path, accessToken) {
+export function saveFindingFeedback(repositoryId, fingerprint, payload, accessToken, options = {}) {
+  return backendRequest(`/history/repositories/${encodeURIComponent(repositoryId)}/findings/${encodeURIComponent(fingerprint)}/feedback`, accessToken, {
+    ...options, method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" }
+  });
+}
+
+async function backendRequest(path, accessToken, options = {}) {
   if (!accessToken) {
     throw new Error("Sign in before viewing project history.");
   }
 
   const response = await fetch(backendUrl(path), {
+    ...options,
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      Accept: "application/json"
+      Accept: "application/json",
+      ...options.headers
     }
   });
   const text = await response.text();
   const data = text ? JSON.parse(text) : [];
   if (!response.ok) {
-    throw new Error(data?.message || data?.hint || data?.details || "History request failed.");
+    throw new Error(data?.detail || data?.message || data?.hint || data?.details || "History request failed.");
   }
   return data;
 }

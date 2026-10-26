@@ -1,32 +1,34 @@
 from __future__ import annotations
 
-import copy
+import json
 import os
 import threading
 import time
-import uuid
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
 
-from .agent import RepoReviewAgent
-from .analyzer import analyze_repository
+from .application import execute_review_request as execute_review_request
+from .application import run_review_for_path as run_review_for_path
 from .auth import AuthError, AuthUser, bearer_token_from_headers, get_supabase_user
-from .cli import resolve_target
 from .env import load_local_env
-from .function_agent import OpenAIFunctionCallingAgent
 from .history import (
     HistoryNotFoundError,
     HistoryStoreError,
     SupabaseHistoryStore,
-    SupabaseReviewJobStore,
 )
-from .i18n import localize_report
-from .llm import AIProviderError, add_ai_review, attach_ai_error
-from .report import render_markdown
+from .llm import AIProviderError
+from .requests import FindingFeedbackRequest as FindingFeedbackRequest
+from .requests import ReportQuestionRequest as ReportQuestionRequest
+from .requests import ReviewRequest as ReviewRequest
+from .review_jobs import BaseReviewJobStore as BaseReviewJobStore
+from .review_jobs import InMemoryReviewJobStore as InMemoryReviewJobStore
+from .review_jobs import JobCapacityError as JobCapacityError
+from .review_jobs import ReviewJob as ReviewJob
+from .review_jobs import SupabaseBackedReviewJobStore as SupabaseBackedReviewJobStore
+from .review_jobs import _job_from_supabase_row as _job_from_supabase_row
+from .review_jobs import _review_request_payload as _review_request_payload
+from .review_jobs import _utc_now as _utc_now
+from .review_jobs import build_review_job_store as build_review_job_store
 from .security import (
     InMemoryRateLimiter,
     bool_from_env,
@@ -42,7 +44,6 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, HTMLResponse
     from fastapi.staticfiles import StaticFiles
-    from pydantic import BaseModel, Field
 except ImportError as exc:  # pragma: no cover - optional dependency guard.
     raise RuntimeError(
         "Web dependencies are not installed. Run `python -m pip install -e .[web]`."
@@ -60,16 +61,10 @@ FRONTEND_DIST = Path(
 )
 FRONTEND_INDEX = FRONTEND_DIST / "index.html"
 FRONTEND_ASSETS = FRONTEND_DIST / "assets"
-WEB_MAX_FILES_LIMIT = int_from_env("REPO_REVIEW_MAX_FILES_LIMIT", 1_000, minimum=1)
-WEB_MAX_FILE_SIZE_LIMIT = int_from_env(
-    "REPO_REVIEW_MAX_FILE_SIZE_LIMIT",
-    1_000_000,
-    minimum=1_024,
-)
 WEB_RATE_LIMITER = InMemoryRateLimiter(
-    limit_per_minute=int_from_env("REPO_REVIEW_RATE_LIMIT_PER_MINUTE", 30, minimum=0)
+    limit_per_minute=int_from_env("REPO_REVIEW_RATE_LIMIT_PER_MINUTE", 30, minimum=0),
+    max_keys=int_from_env("REPO_REVIEW_RATE_LIMIT_MAX_KEYS", 10_000, minimum=100),
 )
-WEB_JOB_WORKERS = int_from_env("REPO_REVIEW_JOB_WORKERS", 2, minimum=1)
 WEB_AUTH_CACHE_TTL = int_from_env("REPO_REVIEW_AUTH_CACHE_TTL", 60, minimum=0)
 
 FALLBACK_HTML = """<!doctype html>
@@ -93,190 +88,6 @@ repo-review-web</pre>
 </html>"""
 
 
-class ReviewRequest(BaseModel):
-    target: str = Field(..., description="Local repository path or GitHub URL.")
-    mode: Literal["direct", "agent", "function-calling"] = "agent"
-    ai_provider: Literal["none", "openai", "openrouter", "anthropic", "ollama"] = "none"
-    ai_model: str | None = None
-    report_language: Literal["en", "zh-CN"] = "en"
-    max_files: int = Field(500, ge=1, le=WEB_MAX_FILES_LIMIT)
-    max_file_size: int = Field(512_000, ge=1_024, le=WEB_MAX_FILE_SIZE_LIMIT)
-    lint: bool = False
-    save_history: bool = False
-    history_repo_url: str | None = None
-
-
-@dataclass
-class ReviewJob:
-    id: str
-    status: Literal["queued", "running", "completed", "failed"]
-    owner_id: str | None
-    owner_email: str | None
-    created_at: str
-    updated_at: str
-    target: str
-    result: dict[str, Any] | None = None
-    error: str | None = None
-
-    def to_dict(self, *, include_result: bool = True) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "job_id": self.id,
-            "status": self.status,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "target": self.target,
-        }
-        if self.error:
-            payload["error"] = self.error
-        if include_result and self.result is not None:
-            payload["result"] = self.result
-        return payload
-
-
-class BaseReviewJobStore:
-    """Shared executor wiring and run loop for the review job stores.
-
-    Subclasses own persistence (in-memory dict vs Supabase) by implementing the
-    three status hooks; the dispatch and error-handling loop lives here so it is
-    written once.
-    """
-
-    def __init__(self, *, max_workers: int = WEB_JOB_WORKERS) -> None:
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="repo-review")
-
-    def _dispatch(self, job_id: str, request: ReviewRequest, user: AuthUser | None) -> None:
-        self._executor.submit(self._run, job_id, copy.deepcopy(request), copy.deepcopy(user))
-
-    def _run(self, job_id: str, request: ReviewRequest, user: AuthUser | None) -> None:
-        try:
-            self._set_running(job_id)
-            result = execute_review_request(request, user)
-        except (AIProviderError, RuntimeError, SystemExit, HistoryStoreError, PermissionError) as exc:
-            self._set_failed(job_id, str(exc))
-        except Exception as exc:  # pragma: no cover - defensive job boundary.
-            self._set_failed(job_id, f"Unexpected review job failure: {exc}")
-        else:
-            self._set_completed(job_id, result)
-
-    def _set_running(self, job_id: str) -> None:
-        raise NotImplementedError
-
-    def _set_completed(self, job_id: str, result: dict[str, Any]) -> None:
-        raise NotImplementedError
-
-    def _set_failed(self, job_id: str, error: str) -> None:
-        raise NotImplementedError
-
-
-class InMemoryReviewJobStore(BaseReviewJobStore):
-    def __init__(self, *, max_workers: int = WEB_JOB_WORKERS) -> None:
-        super().__init__(max_workers=max_workers)
-        self._jobs: dict[str, ReviewJob] = {}
-        self._lock = threading.Lock()
-
-    def submit(self, *, request: ReviewRequest, user: AuthUser | None) -> ReviewJob:
-        now = _utc_now()
-        job = ReviewJob(
-            id=uuid.uuid4().hex,
-            status="queued",
-            owner_id=user.id if user else None,
-            owner_email=user.email if user else None,
-            created_at=now,
-            updated_at=now,
-            target=request.target,
-        )
-        with self._lock:
-            self._jobs[job.id] = job
-
-        self._dispatch(job.id, request, user)
-        return job
-
-    def get(self, job_id: str) -> ReviewJob | None:
-        with self._lock:
-            return copy.deepcopy(self._jobs.get(job_id))
-
-    def _set_running(self, job_id: str) -> None:
-        self._update(job_id, status="running")
-
-    def _set_completed(self, job_id: str, result: dict[str, Any]) -> None:
-        self._update(job_id, status="completed", result=result)
-
-    def _set_failed(self, job_id: str, error: str) -> None:
-        self._update(job_id, status="failed", error=error)
-
-    def _update(
-        self,
-        job_id: str,
-        *,
-        status: Literal["queued", "running", "completed", "failed"],
-        result: dict[str, Any] | None = None,
-        error: str | None = None,
-    ) -> None:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if not job:
-                return
-            job.status = status
-            job.updated_at = _utc_now()
-            job.result = result
-            job.error = error
-
-
-class SupabaseBackedReviewJobStore(BaseReviewJobStore):
-    def __init__(
-        self,
-        *,
-        storage: SupabaseReviewJobStore | None = None,
-        max_workers: int = WEB_JOB_WORKERS,
-    ) -> None:
-        super().__init__(max_workers=max_workers)
-        self._storage = storage or SupabaseReviewJobStore.from_env()
-
-    def submit(self, *, request: ReviewRequest, user: AuthUser | None) -> ReviewJob:
-        row = self._storage.create_job(
-            target=request.target,
-            request_payload=_review_request_payload(request),
-            owner_id=user.id if user else None,
-        )
-        job = _job_from_supabase_row(row)
-        self._dispatch(job.id, request, user)
-        return job
-
-    def get(self, job_id: str) -> ReviewJob | None:
-        row = self._storage.get_job(job_id)
-        if row is None:
-            return None
-        return _job_from_supabase_row(row)
-
-    def fail_stale_running_jobs(self) -> int:
-        return self._storage.fail_stale_running_jobs()
-
-    def _set_running(self, job_id: str) -> None:
-        self._storage.update_job(job_id, status="running")
-
-    def _set_completed(self, job_id: str, result: dict[str, Any]) -> None:
-        self._storage.update_job(job_id, status="completed", result=result)
-
-    def _set_failed(self, job_id: str, error: str) -> None:
-        try:
-            self._storage.update_job(job_id, status="failed", error=error)
-        except HistoryStoreError:
-            return
-
-
-def build_review_job_store() -> InMemoryReviewJobStore | SupabaseBackedReviewJobStore:
-    mode = os.environ.get("REPO_REVIEW_JOB_STORE", "auto").strip().lower()
-    if mode == "memory":
-        return InMemoryReviewJobStore()
-    if mode == "supabase":
-        return SupabaseBackedReviewJobStore()
-    if os.environ.get("SUPABASE_URL") and (
-        os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
-    ):
-        return SupabaseBackedReviewJobStore()
-    return InMemoryReviewJobStore()
-
-
 def create_app() -> FastAPI:
     review_jobs = build_review_job_store()
 
@@ -286,7 +97,15 @@ def create_app() -> FastAPI:
         if fail_stale:
             with suppress(HistoryStoreError):
                 fail_stale()
-        yield
+        start = getattr(review_jobs, "start", None)
+        if start:
+            start()
+        try:
+            yield
+        finally:
+            shutdown = getattr(review_jobs, "shutdown", None)
+            if shutdown:
+                shutdown()
 
     app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0", lifespan=lifespan)
     configure_cors(app)
@@ -305,8 +124,12 @@ def create_app() -> FastAPI:
         user = authenticated_user_from_request(http_request)
         enforce_public_api_controls(http_request, request.target)
 
+        if request.save_history and user is None:
+            raise HTTPException(status_code=401, detail="Sign in before saving review history.")
         try:
-            return execute_review_request(request, user)
+            return review_jobs.execute_sync(request, user)
+        except JobCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         except (AIProviderError, RuntimeError, SystemExit, HistoryStoreError) as exc:
@@ -320,8 +143,10 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=401, detail="Sign in before saving review history.")
         try:
             job = review_jobs.submit(request=request, user=user)
+        except JobCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except HistoryStoreError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail="Review storage is unavailable. Try again later.") from exc
         return job.to_dict(include_result=False)
 
     @app.get("/review/jobs/{job_id}")
@@ -330,12 +155,76 @@ def create_app() -> FastAPI:
         try:
             job = review_jobs.get(job_id)
         except HistoryStoreError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail="Review storage is unavailable. Try again later.") from exc
         if job is None:
             raise HTTPException(status_code=404, detail="Review job was not found.")
         if job.owner_id and (user is None or user.id != job.owner_id):
             raise HTTPException(status_code=403, detail="You do not have access to this review job.")
         return job.to_dict()
+
+    @app.post("/review/jobs/{job_id}/cancel")
+    def cancel_review_job(http_request: Request, job_id: str) -> dict:
+        user = authenticated_user_from_request(http_request, required=True)
+        try:
+            job = review_jobs.cancel(job_id, user.id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="Review job was not found.")
+            return job.to_dict()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except HistoryStoreError as exc:
+            raise HTTPException(status_code=503, detail="Review storage is unavailable. Try again later.") from exc
+
+    @app.post("/review/questions")
+    def report_question(http_request: Request, request: ReportQuestionRequest) -> dict:
+        user = authenticated_user_from_request(http_request, required=request.provider != "none")
+        if not request.question.strip():
+            raise HTTPException(status_code=422, detail="Enter a question.")
+        enforce_api_access_controls(http_request)
+        try:
+            report = request.report
+            if request.job_id:
+                job = review_jobs.get(request.job_id)
+                if job is None:
+                    raise HTTPException(status_code=404, detail="Review job was not found.")
+                if job.owner_id and (not user or user.id != job.owner_id):
+                    raise HTTPException(status_code=403, detail="You do not have access to this review job.")
+                if job.status != "completed":
+                    raise HTTPException(status_code=409, detail="Wait for the report to finish.")
+                report = (job.result or {}).get("report")
+            if not report or len(json.dumps(report).encode("utf-8")) > 200_000:
+                raise HTTPException(status_code=422, detail="Provide a completed report under 200 KB.")
+            if request.provider != "none":
+                return review_jobs.execute_question(request, user.id, report)
+            from .questions import answer_report_question
+            return answer_report_question(report, request.question, provider=request.provider,
+                                          model=request.model, language=request.language,
+                                          token_budget=request.token_budget)
+        except JobCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except HistoryStoreError as exc:
+            raise HTTPException(status_code=503, detail="Review storage is unavailable. Try again later.") from exc
+        except (AIProviderError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            code = 504 if "deadline" in str(exc) else 400
+            raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+    @app.post("/history/repositories/{repository_id}/findings/{fingerprint}/feedback")
+    def finding_feedback(http_request: Request, repository_id: str, fingerprint: str,
+                         request: FindingFeedbackRequest) -> dict:
+        user = authenticated_user_from_request(http_request, required=True)
+        try:
+            return SupabaseHistoryStore.from_env().set_finding_feedback(
+                repository_id=repository_id, fingerprint=fingerprint, owner_id=user.id,
+                status=request.status, reason=request.reason,
+                expires_at=request.expires_at.isoformat() if request.expires_at else None)
+        except HistoryNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except HistoryStoreError as exc:
+            raise HTTPException(status_code=503, detail="Review storage is unavailable. Try again later.") from exc
 
     @app.get("/history/repositories")
     def history_repositories(http_request: Request) -> dict:
@@ -343,7 +232,7 @@ def create_app() -> FastAPI:
         try:
             repositories = SupabaseHistoryStore.from_env().list_repositories(owner_id=user.id)
         except HistoryStoreError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail="Review storage is unavailable. Try again later.") from exc
         return {"repositories": repositories}
 
     @app.get("/history/repositories/{repository_id}")
@@ -357,7 +246,7 @@ def create_app() -> FastAPI:
         except HistoryNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except HistoryStoreError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail="Review storage is unavailable. Try again later.") from exc
 
     if FRONTEND_ASSETS.exists():
         app.mount("/assets", StaticFiles(directory=str(FRONTEND_ASSETS)), name="assets")
@@ -371,32 +260,6 @@ def create_app() -> FastAPI:
     return app
 
 
-def execute_review_request(request: ReviewRequest, user: AuthUser | None) -> dict:
-    with resolve_target(request.target) as repo_path:
-        report = run_review_for_path(request, repo_path)
-
-    history_result = None
-    if request.save_history:
-        if user is None:
-            raise PermissionError("Sign in before saving review history.")
-        history_store = SupabaseHistoryStore.from_env()
-        history_result = history_store.save_report(
-            report=report,
-            repo_url=request.history_repo_url or request.target,
-            report_markdown=render_markdown(report, language=request.report_language),
-            owner_id=user.id,
-        )
-
-    report = localize_report(report, request.report_language)
-    response = {
-        "markdown": render_markdown(report, language=request.report_language),
-        "report": report.to_dict(),
-    }
-    if history_result:
-        response["history"] = history_result.to_dict()
-    return response
-
-
 class AuthTokenCache:
     """Short-lived cache of verified Supabase tokens.
 
@@ -406,8 +269,9 @@ class AuthTokenCache:
     token stays accepted until its cache entry expires, so keep the TTL small.
     """
 
-    def __init__(self, *, ttl_seconds: int) -> None:
+    def __init__(self, *, ttl_seconds: int, max_entries: int = 4096) -> None:
         self.ttl_seconds = ttl_seconds
+        self.max_entries = max(1, max_entries)
         self._entries: dict[str, tuple[float, AuthUser]] = {}
         self._lock = threading.Lock()
 
@@ -430,6 +294,12 @@ class AuthTokenCache:
             return
         current_time = time.time() if now is None else now
         with self._lock:
+            expired = [key for key, (expiry, _) in self._entries.items() if expiry <= current_time]
+            for key in expired:
+                del self._entries[key]
+            self._entries.pop(token, None)
+            while len(self._entries) >= self.max_entries:
+                del self._entries[next(iter(self._entries))]
             self._entries[token] = (current_time + self.ttl_seconds, user)
 
     def clear(self) -> None:
@@ -463,97 +333,28 @@ def authenticated_user_from_request(http_request: Request, *, required: bool | N
     return user
 
 
-def enforce_public_api_controls(http_request: Request, target: str) -> None:
+def enforce_api_access_controls(http_request: Request) -> None:
     expected_token = os.environ.get("REPO_REVIEW_API_TOKEN")
     if not request_token_matches(http_request.headers, expected_token):
         raise HTTPException(status_code=401, detail="Invalid or missing API token.")
 
+    client = getattr(http_request, "client", None)
     client_id = client_identifier(
         http_request.headers,
-        http_request.client.host if http_request.client else None,
+        getattr(client, "host", None) if client else None,
         trust_forwarded=bool_from_env("REPO_REVIEW_TRUST_FORWARDED_FOR", True),
     )
     if not WEB_RATE_LIMITER.allow(client_id):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
 
+
+def enforce_public_api_controls(http_request: Request, target: str) -> None:
+    enforce_api_access_controls(http_request)
+
     try:
         validate_target_policy(target)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def run_review_for_path(request: ReviewRequest, repo_path: Path):
-    if request.mode == "function-calling":
-        return OpenAIFunctionCallingAgent(
-            model=request.ai_model,
-            max_files=request.max_files,
-            max_file_size=request.max_file_size,
-            report_language=request.report_language,
-        ).run(repo_path)
-
-    if request.mode == "agent":
-        return RepoReviewAgent(
-            max_files=request.max_files,
-            max_file_size=request.max_file_size,
-            ai_provider=request.ai_provider,
-            ai_model=request.ai_model,
-            report_language=request.report_language,
-        ).run(repo_path)
-
-    report = analyze_repository(
-        repo_path,
-        max_files=request.max_files,
-        max_file_size=request.max_file_size,
-        run_linters=request.lint,
-    )
-    if request.ai_provider != "none":
-        try:
-            report = add_ai_review(
-                report,
-                provider=request.ai_provider,
-                model=request.ai_model,
-                language=request.report_language,
-            )
-        except AIProviderError as exc:
-            report = attach_ai_error(
-                report,
-                provider=request.ai_provider,
-                model=request.ai_model,
-                error=str(exc),
-            )
-    return report
-
-
-def _review_request_payload(request: ReviewRequest) -> dict[str, Any]:
-    if hasattr(request, "model_dump"):
-        return request.model_dump()
-    return request.dict()
-
-
-def _job_from_supabase_row(row: dict[str, Any]) -> ReviewJob:
-    status = str(row.get("status") or "")
-    if status not in {"queued", "running", "completed", "failed"}:
-        raise HistoryStoreError("Supabase review job row has an invalid status.")
-
-    result = row.get("result_json")
-    if result is not None and not isinstance(result, dict):
-        raise HistoryStoreError("Supabase review job result_json must be an object.")
-
-    return ReviewJob(
-        id=str(row.get("id") or ""),
-        status=status,
-        owner_id=row.get("owner_id"),
-        owner_email=None,
-        created_at=str(row.get("created_at") or ""),
-        updated_at=str(row.get("updated_at") or ""),
-        target=str(row.get("target") or ""),
-        result=result,
-        error=row.get("error"),
-    )
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def configure_cors(app: FastAPI) -> None:
