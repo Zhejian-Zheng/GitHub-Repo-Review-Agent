@@ -139,6 +139,10 @@ class ControlHTTPTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
         web.WEB_AUTH_CACHE.clear()
         self.addCleanup(web.WEB_AUTH_CACHE.clear)
+        rate_limiter = patch.object(web, 'WEB_RATE_LIMITER',
+                                    web.InMemoryRateLimiter(limit_per_minute=0))
+        rate_limiter.start()
+        self.addCleanup(rate_limiter.stop)
         self.store = web.InMemoryReviewJobStore(daily_limit=2)
         self.addCleanup(self.store.shutdown)
         with patch.object(web, 'build_review_job_store', return_value=self.store):
@@ -175,6 +179,15 @@ class ControlHTTPTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['citations'], [])
         self.assertIn('insufficient', response.json()['answer'])
+
+    def test_offline_questions_are_rate_limited_per_client(self):
+        with patch.object(web, 'WEB_RATE_LIMITER', web.InMemoryRateLimiter(limit_per_minute=1)):
+            first = self.client.post('/review/questions',
+                                     json={'question': 'Why?', 'report': self.report})
+            second = self.client.post('/review/questions',
+                                      json={'question': 'Why?', 'report': self.report})
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
 
     def test_ai_requires_login_before_provider_or_admission(self):
         with patch.object(self.store, 'admit_question') as admission:

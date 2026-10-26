@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from repo_review_agent.llm import (
@@ -78,6 +79,27 @@ class LLMTests(unittest.TestCase):
         self.assertIn("Prompt tuning guidance", prompt)
         self.assertIn("Few-shot examples", prompt)
         self.assertIn("risky-js-app", prompt)
+
+    def test_build_review_prompt_compacts_inventory_paths_and_keeps_findings(self) -> None:
+        paths = [f"src/module_{index}/file_{index}.py" for index in range(2000)]
+        report = replace(sample_report(), metrics={
+            "files_scanned": 500,
+            "review_coverage": {
+                "version": 1,
+                "inventory_complete": True,
+                "inventory_paths": paths,
+                "rules_complete": True,
+                "ruff_complete": False,
+            },
+        })
+
+        prompt = build_review_prompt(report)
+
+        self.assertNotIn('"inventory_paths"', prompt)
+        self.assertIn('"inventory_file_count": 2000', prompt)
+        self.assertIn('"inventory_paths_elided": true', prompt)
+        self.assertIn("Add automated tests for the core behavior", prompt)
+        self.assertIn('"Pytest"', prompt)
 
     def test_build_review_prompt_wraps_untrusted_repository_data(self) -> None:
         prompt = build_review_prompt(sample_report())

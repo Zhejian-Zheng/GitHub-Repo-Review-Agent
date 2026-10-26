@@ -61,16 +61,10 @@ FRONTEND_DIST = Path(
 )
 FRONTEND_INDEX = FRONTEND_DIST / "index.html"
 FRONTEND_ASSETS = FRONTEND_DIST / "assets"
-WEB_MAX_FILES_LIMIT = int_from_env("REPO_REVIEW_MAX_FILES_LIMIT", 1_000, minimum=1)
-WEB_MAX_FILE_SIZE_LIMIT = int_from_env(
-    "REPO_REVIEW_MAX_FILE_SIZE_LIMIT",
-    1_000_000,
-    minimum=1_024,
-)
 WEB_RATE_LIMITER = InMemoryRateLimiter(
-    limit_per_minute=int_from_env("REPO_REVIEW_RATE_LIMIT_PER_MINUTE", 30, minimum=0)
+    limit_per_minute=int_from_env("REPO_REVIEW_RATE_LIMIT_PER_MINUTE", 30, minimum=0),
+    max_keys=int_from_env("REPO_REVIEW_RATE_LIMIT_MAX_KEYS", 10_000, minimum=100),
 )
-WEB_JOB_WORKERS = int_from_env("REPO_REVIEW_JOB_WORKERS", 2, minimum=1)
 WEB_AUTH_CACHE_TTL = int_from_env("REPO_REVIEW_AUTH_CACHE_TTL", 60, minimum=0)
 
 FALLBACK_HTML = """<!doctype html>
@@ -186,8 +180,7 @@ def create_app() -> FastAPI:
         user = authenticated_user_from_request(http_request, required=request.provider != "none")
         if not request.question.strip():
             raise HTTPException(status_code=422, detail="Enter a question.")
-        if not request_token_matches(http_request.headers, os.environ.get("REPO_REVIEW_API_TOKEN")):
-            raise HTTPException(status_code=401, detail="Invalid or missing API token.")
+        enforce_api_access_controls(http_request)
         try:
             report = request.report
             if request.job_id:
@@ -340,18 +333,23 @@ def authenticated_user_from_request(http_request: Request, *, required: bool | N
     return user
 
 
-def enforce_public_api_controls(http_request: Request, target: str) -> None:
+def enforce_api_access_controls(http_request: Request) -> None:
     expected_token = os.environ.get("REPO_REVIEW_API_TOKEN")
     if not request_token_matches(http_request.headers, expected_token):
         raise HTTPException(status_code=401, detail="Invalid or missing API token.")
 
+    client = getattr(http_request, "client", None)
     client_id = client_identifier(
         http_request.headers,
-        http_request.client.host if http_request.client else None,
+        getattr(client, "host", None) if client else None,
         trust_forwarded=bool_from_env("REPO_REVIEW_TRUST_FORWARDED_FOR", True),
     )
     if not WEB_RATE_LIMITER.allow(client_id):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
+
+
+def enforce_public_api_controls(http_request: Request, target: str) -> None:
+    enforce_api_access_controls(http_request)
 
     try:
         validate_target_policy(target)

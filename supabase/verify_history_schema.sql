@@ -248,6 +248,157 @@ with checks as (
         and policyname = 'ai_reviews_select_own'
     ),
     'AI reviews are readable through owned repositories'
+  union all
+  select
+    'columns: review job leases',
+    exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'review_jobs' and column_name = 'phase'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'review_jobs' and column_name = 'lease_token'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'review_jobs' and column_name = 'lease_expires_at'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'review_jobs' and column_name = 'attempts'
+    ),
+    'review jobs support atomic claims, leases, phases and bounded retries'
+  union all
+  select
+    'constraint: review job status includes cancelled',
+    exists (
+      select 1 from pg_constraint
+      where conname = 'review_jobs_status_check'
+        and contype = 'c'
+        and pg_get_constraintdef(oid) ilike '%cancelled%'
+    ),
+    'owner cancellation has a durable terminal status'
+  union all
+  select
+    'columns: finding lifecycle and AI evidence',
+    exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'findings' and column_name = 'source'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'findings' and column_name = 'rule_id'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'findings' and column_name = 'path'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'findings' and column_name = 'start_line'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'findings' and column_name = 'end_line'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'findings' and column_name = 'confidence'
+    ) and exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'ai_reviews' and column_name = 'findings_json'
+    ),
+    'findings retain source, location and AI evidence fields'
+  union all
+  select
+    'table: finding_feedback',
+    to_regclass('public.finding_feedback') is not null,
+    'owner-scoped finding decisions are durable'
+  union all
+  select
+    'table: review_daily_usage',
+    to_regclass('public.review_daily_usage') is not null,
+    'daily review and question admissions are shared'
+  union all
+  select
+    'table: review_question_leases',
+    to_regclass('public.review_question_leases') is not null,
+    'AI question capacity is shared across API processes'
+  union all
+  select
+    'table: review_history_operations',
+    to_regclass('public.review_history_operations') is not null,
+    'history writes are idempotent across retries'
+  union all
+  select
+    'function: review job RPCs',
+    to_regprocedure('public.enqueue_review_job(text,jsonb,uuid,integer,integer,integer)') is not null
+      and to_regprocedure('public.claim_review_job(text,integer)') is not null
+      and to_regprocedure('public.recover_review_jobs(integer)') is not null
+      and to_regprocedure('public.cancel_review_job(uuid,uuid)') is not null
+      and to_regprocedure('public.admit_review_question(uuid,integer)') is not null,
+    'queue admission, leasing, recovery, cancellation and daily quotas are installed'
+  union all
+  select
+    'function: history and resolution RPCs',
+    to_regprocedure('public.save_review_history(jsonb,uuid,uuid,text,jsonb)') is not null
+      and to_regprocedure('public.review_policy(jsonb)') is not null
+      and to_regprocedure('public.review_finding_rechecked(jsonb,jsonb)') is not null,
+    'atomic history and coverage-aware resolution are installed'
+  union all
+  select
+    'function: compressed reports cannot prove deletion',
+    exists (
+      select 1 from pg_proc p
+      where p.oid = to_regprocedure('public.review_finding_rechecked(jsonb,jsonb)')::oid
+        and p.prosrc ilike '%inventory_paths_elided%'
+    ),
+    'resolution rejects inventory paths removed for display or model prompts'
+  union all
+  select
+    'function: inventory rule coverage',
+    exists (
+      select 1 from pg_proc p
+      where p.oid = to_regprocedure('public.review_finding_rechecked(jsonb,jsonb)')::oid
+        and p.prosrc ilike '%completed_rules%'
+    ),
+    'completed inventory checks can resolve independently of content scan limits'
+  union all
+  select
+    'function: question capacity RPCs',
+    to_regprocedure('public.acquire_review_question(uuid,integer,integer,integer,integer)') is not null
+      and to_regprocedure('public.release_review_question(uuid)') is not null,
+    'shared question admission and release RPCs are installed'
+  union all
+  select
+    'rls: lifecycle and leasing tables',
+    exists (
+      select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'finding_feedback' and c.relrowsecurity
+    ) and exists (
+      select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'review_daily_usage' and c.relrowsecurity
+    ) and exists (
+      select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'review_question_leases' and c.relrowsecurity
+    ) and exists (
+      select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'review_history_operations' and c.relrowsecurity
+    ),
+    'new ownership, quota and lease tables keep RLS enabled'
+  union all
+  select
+    'privilege: service_role lifecycle and leasing tables',
+    exists (
+      select 1 from information_schema.role_table_grants
+      where table_schema = 'public' and table_name = 'finding_feedback'
+        and grantee = 'service_role' and privilege_type = 'SELECT'
+    ) and exists (
+      select 1 from information_schema.role_table_grants
+      where table_schema = 'public' and table_name = 'review_daily_usage'
+        and grantee = 'service_role' and privilege_type = 'INSERT'
+    ) and exists (
+      select 1 from information_schema.role_table_grants
+      where table_schema = 'public' and table_name = 'review_question_leases'
+        and grantee = 'service_role' and privilege_type = 'SELECT'
+    ) and exists (
+      select 1 from information_schema.role_table_grants
+      where table_schema = 'public' and table_name = 'review_history_operations'
+        and grantee = 'service_role' and privilege_type = 'INSERT'
+    ),
+    'backend service role can operate the new lifecycle and leasing tables'
 )
 select
   check_name,

@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .i18n import finding_title_variants
 from .linters import collect_linter_findings
 from .models import Finding, RepositorySnapshot, ReviewReport
 from .scanner import read_text_file, scan_repository, track_incomplete_reads
@@ -103,6 +104,19 @@ GITHUB_ACTIONS_WRITE_PERMISSION_PATTERN = re.compile(
 
 PYTHON_DEPENDENCY_VERSION_PATTERN = re.compile(r"[<>=!~]=|===")
 
+# These checks depend only on the complete file inventory, not sampled content.
+# Keep title identities for compatibility with existing finding fingerprints.
+INVENTORY_RULE_TITLES = (
+    "Add a README with setup and usage instructions",
+    "Add an explicit open-source license",
+    "Add a .gitignore file",
+    "Add automated tests for the core behavior",
+    "Expand test coverage across source modules",
+    "Add a CI workflow",
+    "Add a dependency manifest",
+    "Commit a JavaScript package lockfile",
+)
+
 
 def analyze_repository(
     root: Path,
@@ -137,6 +151,8 @@ def analyze_snapshot(
         'version': 1, 'inventory_complete': inventory_complete,
         'inventory_paths': [f.path for f in inventory[:10_000]],
         'rules_complete': complete,
+        'completed_rules': [variant for title in INVENTORY_RULE_TITLES
+                            for variant in finding_title_variants(title)] if inventory_complete else [],
         'ruff_complete': bool(run_linters and complete and len(lint_findings) < 8
                               and not any(f.category == 'tool status' for f in lint_findings)),
     }
@@ -626,7 +642,7 @@ def find_secret_like_values(snapshot: RepositorySnapshot, root: Path) -> list[st
     candidate_files = [
         file
         for file in snapshot.files
-        if file.kind in {"source", "dependency", "project-meta", "ops", "other"}
+        if file.kind in {"source", "dependency", "project-meta", "ops", "ci", "other"}
         and file.suffix not in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip"}
     ]
 

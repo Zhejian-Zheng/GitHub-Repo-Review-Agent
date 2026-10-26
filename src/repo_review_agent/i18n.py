@@ -47,6 +47,11 @@ def ai_section_headings(language: str | None) -> list[str]:
     return AI_SECTION_HEADINGS[normalize_report_language(language)]
 
 
+def finding_title_variants(title: str) -> list[str]:
+    """Identify a built-in check in either supported report language."""
+    return list(dict.fromkeys((title, _FINDING_TITLE_ZH.get(title, title))))
+
+
 def localize_report(report: ReviewReport, language: str | None) -> ReviewReport:
     from .findings import canonicalize_report
 

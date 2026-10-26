@@ -174,9 +174,9 @@ The application uses LangChain 1.x and LangGraph 1.x. Both Docker images install
 
 ## Bounded jobs and recovery
 
-Apply `supabase/migrations/20261004_review_job_leases.sql` **before deploying this backend** to an existing Supabase project. This migration adds atomic admission, claims, leases and fenced completion. Without Supabase, the queue is bounded but jobs do not survive a process restart.
+Apply **all** files in `supabase/migrations` in filename order through `20261023_inventory_rule_coverage.sql` before deploying this backend to an existing Supabase project. `20261004_review_job_leases.sql` adds atomic admission, claims, leases and fenced completion; the later migrations add finding lifecycle, cancellation, atomic history, resolution coverage, shared question capacity and compressed-report resolution safeguards. `schema.sql` is only a legacy bootstrap. Without Supabase, the queue is bounded but jobs do not survive a process restart.
 
-The backend checks queued and expired leases every two seconds. A crashed job can be retried up to three times. Execution is at least once: a crash after history persistence and before job completion can produce duplicate history entries. Apply the migration in a staging database and verify two workers cannot claim the same lease before production rollout; local tests mock the database protocol.
+The backend checks queued and expired leases every two seconds. A crashed job can be retried up to three times. Execution is at least once: a crash after history persistence and before job completion can produce duplicate history entries. Apply the migrations in a staging database and verify two workers cannot claim the same lease before production rollout; the disposable-Postgres integration suite covers leases, RLS and atomic history.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -191,6 +191,6 @@ Review work runs in a subprocess. On POSIX systems the deadline kills the proces
 Optional Langfuse tracing setup is documented in [Langfuse](langfuse.md).
 
 
-### Atomic history migration (2026-10-08)
+### History, resolution and question migrations
 
-Before deploying the current history backend, apply all migrations through `20261006_atomic_history.sql` in filename order. Saving history requires the new transaction RPC and does not fall back to partial multi-write saves. See [atomic history and local PostgreSQL verification](atomic-history.md). Local tests have not applied this migration to your hosted database.
+Before deploying the current history backend, apply every migration through `20261023_inventory_rule_coverage.sql` in filename order. This includes `20261005_finding_lifecycle.sql`, `20261005_job_controls.sql`, `20261006_atomic_history.sql`, `20261008_resolution_coverage.sql`, `20261020_question_capacity.sql`, `20261021_resolution_elided_paths.sql` and `20261023_inventory_rule_coverage.sql`. Saving history requires the atomic transaction RPC and does not fall back to partial multi-write saves. Question capacity fails closed until the question migration exists. Run `supabase/verify_history_schema.sql` after migration; every row must return `pass`. See [atomic history and local PostgreSQL verification](atomic-history.md) and [question capacity](question-capacity.md).

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { ArrowRight, ChevronDown, FileText, RefreshCw, RotateCcw } from "lucide-react";
 import { isAuthConfigured, signOut } from "./authClient";
 import { DEFAULT_TARGET, MODEL_OPTIONS, progressCopy } from "./config";
+import { normalizeTokenBudget } from "./reviewJobsClient";
 
 import { AuthGate, AuthPanel, GuestPanel } from "./features/Auth";
 import { ProjectHistoryWorkspace } from "./features/History";
@@ -196,7 +197,8 @@ function App() {
             <label>{isChinese ? "AI Token 上限" : "AI token budget"}
               <input aria-label="AI token budget" type="number" min="256" max="200000" step="1"
                 value={form.ai_token_budget || 20000} disabled={isRunning}
-                onChange={event => setForm(current => ({ ...current, ai_token_budget: Number(event.target.value) }))} />
+                onChange={event => setForm(current => ({ ...current, ai_token_budget: Number(event.target.value) }))}
+                onBlur={() => setForm(current => ({ ...current, ai_token_budget: normalizeTokenBudget(current.ai_token_budget) }))} />
             </label>
             <label><input type="checkbox" checked={Boolean(form.vulnerability_scan)} disabled={isRunning}
               onChange={event => setForm(current => ({ ...current, vulnerability_scan: event.target.checked }))} />

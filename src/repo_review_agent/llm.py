@@ -19,6 +19,7 @@ from .provider import (
     resolve_model,
 )
 from .redaction import redact_data
+from .report import public_metrics
 from .review_schema import ReviewSections
 from .telemetry import review_tracing
 
@@ -137,7 +138,7 @@ def build_review_prompt(
         "repo_name": report.repo_name,
         "generated_at": report.generated_at,
         "overview": report.overview[:20],
-        "metrics": report.metrics,
+        "metrics": public_metrics(report.metrics),
         "framework_signals": report.framework_signals,
         "findings": [
             {

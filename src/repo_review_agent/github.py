@@ -204,11 +204,16 @@ class GitHubClient:
         )
 
     def list_issue_comments(self, repo: str, issue_number: int) -> list[dict[str, Any]]:
-        comments = self._request_list(
-            "GET",
-            f"/repos/{repo}/issues/{issue_number}/comments?per_page=100",
-        )
-        return [comment for comment in comments if isinstance(comment, dict)]
+        comments: list[dict[str, Any]] = []
+        for page in range(1, 31):
+            batch = self._request_list(
+                "GET",
+                f"/repos/{repo}/issues/{issue_number}/comments?per_page=100&page={page}",
+            )
+            comments.extend(comment for comment in batch if isinstance(comment, dict))
+            if len(batch) < 100:
+                break
+        return comments
 
     def update_issue_comment(self, repo: str, comment_id: int, body: str) -> dict[str, Any]:
         return self._request_dict(

@@ -403,6 +403,36 @@ class WebAPITests(unittest.TestCase):
 
         self.assertEqual(job.to_dict()["error"], "nope")
 
+    def test_job_from_supabase_row_hides_internal_history_and_inventory_paths(self) -> None:
+        from repo_review_agent.web import _job_from_supabase_row
+
+        report = {
+            "repo_name": "example",
+            "metrics": {
+                "review_coverage": {
+                    "version": 1,
+                    "inventory_complete": True,
+                    "inventory_paths": ["app.py"],
+                    "rules_complete": True,
+                }
+            },
+            "findings": [],
+        }
+        row = {
+            "id": "job-id",
+            "status": "completed",
+            "request_json": {"report_language": "en"},
+            "result_json": {"report": report, "_pending_history": {"owner_id": "secret"}},
+        }
+
+        job = _job_from_supabase_row(row)
+
+        self.assertNotIn("_pending_history", job.result)
+        coverage = job.result["report"]["metrics"]["review_coverage"]
+        self.assertNotIn("inventory_paths", coverage)
+        self.assertEqual(coverage["inventory_file_count"], 1)
+        self.assertIn("inventory_paths", row["result_json"]["report"]["metrics"]["review_coverage"])
+
     @patch("repo_review_agent.web.BaseReviewJobStore._execute")
     def test_in_memory_review_job_store_records_failed_jobs(self, mock_execute_review) -> None:
         from repo_review_agent.web import InMemoryReviewJobStore, ReviewRequest

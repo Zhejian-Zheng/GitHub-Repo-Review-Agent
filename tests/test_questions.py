@@ -1,6 +1,6 @@
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
@@ -15,6 +15,54 @@ REPORT = {'repo_name':'example','overview':['Python app'], 'findings':[{
 
 
 class QuestionTests(unittest.TestCase):
+    def test_generic_followups_still_refer_to_report_evidence(self):
+        for question in ('What should I fix first?', 'What are the top risks?',
+                         '总结这份报告', '有哪些问题？', '应该优先修复什么？'):
+            with self.subTest(question=question):
+                self.assertEqual(len(questions.answer_report_question(REPORT, question)['citations']), 1)
+
+    def test_mixed_chinese_english_and_paths_retrieve_late_evidence(self):
+        findings = [{**REPORT['findings'][0], 'title': 'Logging risk', 'path': f'log_{i}.py',
+                     'evidence': ['logger.info(message)'], 'recommendation': 'Review logging.'}
+                    for i in range(8)]
+        findings.append({**REPORT['findings'][0], 'title': 'SQL injection', 'path': 'src/database.py',
+                         'category': 'database security', 'rule_id': 'security.sql-injection',
+                         'evidence': ['cursor.execute(query)'], 'recommendation': 'Use parameterized SQL.'})
+        for question in ('How do I fix SQL injection?', '如何修复SQL注入问题？',
+                         '如何修复注入漏洞？', '解释src/database.py的问题', 'security.sql-injection',
+                         'What are the database security risks?'):
+            with self.subTest(question=question):
+                result = questions.answer_report_question({'findings': findings}, question)
+                self.assertEqual([c['path'] for c in result['citations']], ['src/database.py'])
+
+    def test_unrelated_question_has_no_irrelevant_citations(self):
+        for question in ('How do I configure Kubernetes autoscaling?', '如何配置容器自动扩缩容？'):
+            with self.subTest(question=question):
+                result = questions.answer_report_question(REPORT, question, language='zh-CN')
+                self.assertEqual(result['citations'], [])
+                self.assertIn('没有足够', result['answer'])
+
+    def test_rule_and_category_terms_are_searchable_without_substring_matches(self):
+        finding = {**REPORT['findings'][0], 'title': 'Explicit configuration',
+                   'category': 'security', 'rule_id': 'config.public-access'}
+        for question in ('security', 'config.public-access'):
+            self.assertEqual(len(questions.answer_report_question({'findings': [finding]}, question)['citations']), 1)
+        self.assertEqual(questions.answer_report_question({'findings': [finding]}, 'CI')['citations'], [])
+
+    def test_model_receives_only_matching_evidence(self):
+        model = Mock(wraps=FakeListChatModel(responses=['{"answer":"Insufficient evidence","citation_ids":[]}']))
+        with patch('repo_review_agent.questions.create_chat_model', return_value=model):
+            result = questions.answer_report_question(REPORT, 'Kubernetes autoscaling?', provider='ollama')
+        self.assertEqual(json.loads(model.invoke.call_args.args[0][1].content)['evidence'], [])
+        self.assertEqual(result['citations'], [])
+
+    def test_canonical_empty_findings_do_not_restore_ai_provenance(self):
+        report = {'findings_canonical': True, 'findings': [],
+                  'ai_review': {'findings': REPORT['findings']}}
+        self.assertEqual(questions.answer_report_question(report, 'Why?')['citations'], [])
+        report.pop('findings_canonical')
+        self.assertEqual(len(questions.answer_report_question(report, 'Why?')['citations']), 1)
+
     def test_offline_followup_returns_existing_evidence(self):
         result = questions.answer_report_question(REPORT, 'What is unsafe in the return?')
         self.assertIn('Unsafe return', result['answer'])

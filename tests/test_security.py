@@ -25,6 +25,7 @@ class SecurityTests(unittest.TestCase):
         self.assertTrue(is_github_https_url("https://github.com/owner/repo"))
         self.assertTrue(is_github_https_url("https://www.github.com/owner/repo.git"))
         self.assertFalse(is_github_https_url("git@github.com:owner/repo.git"))
+        self.assertFalse(is_github_https_url("http://github.com/owner/repo"))
         self.assertFalse(is_github_https_url("https://example.com/owner/repo"))
         self.assertFalse(is_github_https_url("https://github.com/owner"))
 
@@ -65,6 +66,16 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(client_identifier({}, "127.0.0.1"), "127.0.0.1")
         self.assertEqual(client_identifier({}, None), "unknown")
 
+    def test_client_identifier_prefers_real_ip_and_bounds_the_key(self) -> None:
+        self.assertEqual(
+            client_identifier(
+                {"x-real-ip": "203.0.113.9", "x-forwarded-for": "198.51.100.1"},
+                "127.0.0.1",
+            ),
+            "203.0.113.9",
+        )
+        self.assertEqual(len(client_identifier({"x-real-ip": "x" * 500}, None)), 128)
+
     def test_client_identifier_ignores_forwarded_for_when_untrusted(self) -> None:
         self.assertEqual(
             client_identifier(
@@ -93,6 +104,16 @@ class SecurityTests(unittest.TestCase):
         self.assertTrue(limiter.allow("client", now=101))
         self.assertFalse(limiter.allow("client", now=102))
         self.assertTrue(limiter.allow("client", now=161))
+
+    def test_rate_limiter_bounds_spoofed_key_memory(self) -> None:
+        limiter = InMemoryRateLimiter(limit_per_minute=10, max_keys=3)
+
+        for index in range(100):
+            self.assertTrue(limiter.allow(f"spoofed-{index}", now=100))
+
+        self.assertLessEqual(len(limiter._hits), 3)
+        self.assertNotIn("spoofed-0", limiter._hits)
+        self.assertIn("spoofed-99", limiter._hits)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,76 @@
+import json
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 
 class ReviewToolsTests(unittest.TestCase):
+    def test_large_inventory_keeps_analysis_valid_and_findings_visible(self):
+        from repo_review_agent.review_tools import ReviewSession
+
+        for count in (200, 500):
+            with self.subTest(count=count), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for index in range(count):
+                    (root / f'component_{index:03d}_with_a_descriptive_name.py').write_text('value = 1\n')
+                session = ReviewSession(root)
+                analyze = next(t for t in session.tools() if t.name == 'analyze_repository')
+                result = analyze.invoke({})
+                self.assertLessEqual(len(result), 6000)
+                data = json.loads(result)
+                self.assertTrue(data['findings'])
+                self.assertEqual(data['total_findings'], len(session.report.findings))
+                self.assertNotIn('inventory_paths', data['metrics']['review_coverage'])
+                self.assertEqual(data['metrics']['files_scanned'], count)
+                self.assertEqual(len(session.report.metrics['review_coverage']['inventory_paths']), count)
+
+    def test_analysis_pages_include_every_finding_and_preserve_high_priority(self):
+        from repo_review_agent.models import Finding
+        from repo_review_agent.review_tools import ReviewSession
+
+        with TemporaryDirectory() as tmp:
+            session = ReviewSession(Path(tmp))
+            findings = [Finding(f'Finding {i}', 'low', 'code', ['quote'], '修复 "quoted" \\ text ' * 80,
+                                [f'src/file_{i}.py']) for i in range(30)]
+            findings.append(Finding('Critical defect', 'high', 'security', ['bad'], 'Fix', ['app.py']))
+            session.report = replace(session.current_report(), findings=findings)
+            analyze = next(t for t in session.tools() if t.name == 'analyze_repository')
+            titles, offset = [], 0
+            while offset is not None:
+                result = analyze.invoke({'offset': offset})
+                self.assertLessEqual(len(result), 6000)
+                page = json.loads(result)
+                self.assertTrue(page['findings'])
+                titles.extend(item['title'] for item in page['findings'])
+                next_offset = page['next_offset']
+                self.assertTrue(next_offset is None or next_offset > offset)
+                self.assertEqual(page['truncated'], next_offset is not None)
+                offset = next_offset
+            self.assertEqual(titles[0], 'Critical defect')
+            self.assertCountEqual(titles, [f.title for f in findings])
+            self.assertEqual(session.report.findings, findings)
+            self.assertEqual(json.loads(analyze.invoke({'offset': 1000}))['findings'], [])
+
+    def test_analysis_bounds_escaped_fields_without_cutting_paths(self):
+        from repo_review_agent.models import Finding
+        from repo_review_agent.review_tools import ReviewSession
+
+        with TemporaryDirectory() as tmp:
+            session = ReviewSession(Path(tmp))
+            paths = ['src/' + 'nested/' * 200 + 'app.py', 'src/app.py']
+            finding = Finding('\x01' * 500, 'high', '\x01' * 500, [], '\x01' * 3000,
+                              paths, rule_id='\x01' * 500)
+            session.report = replace(session.current_report(), findings=[finding])
+            analyze = next(t for t in session.tools() if t.name == 'analyze_repository')
+            result = analyze.invoke({})
+            self.assertLessEqual(len(result), 6000)
+            summary = json.loads(result)['findings'][0]
+            self.assertEqual(summary['evidence_paths'], ['src/app.py'])
+            self.assertCountEqual(summary['truncated_fields'],
+                                  ['title', 'category', 'rule_id', 'recommendation', 'evidence_paths'])
+            self.assertEqual(session.report.findings[0].evidence_paths, paths)
+
     def test_scan_inspect_analyze_render_share_state(self):
         from repo_review_agent.review_tools import ReviewSession
 

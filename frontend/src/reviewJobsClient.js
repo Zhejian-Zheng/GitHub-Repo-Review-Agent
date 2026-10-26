@@ -1,6 +1,16 @@
 import { authConfig, backendUrl } from "./authClient";
 const abortError = () => new DOMException("Review tracking stopped.", "AbortError");
 
+export function normalizeTokenBudget(value, fallback = 20000) {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(200000, Math.max(256, parsed));
+}
+
+export function cancellationTargetsCurrentJob(jobId, pendingJob, controller, currentController) {
+  return Boolean(pendingJob && pendingJob.id === jobId && currentController === controller);
+}
+
 // Bounds token refresh, fetch and body reads, even if an operation ignores abort.
 async function bounded(operation, signal, timeoutMs) {
   const controller = new AbortController();

@@ -527,7 +527,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--block-scope",
         choices=["new", "all"],
         default="new",
-        help="Apply the CI gate to only new findings or to all current findings.",
+        help="Apply the CI gate to only new findings or to all current findings. With --changed-files-json, 'all' is scoped to changed files.",
     )
     parser.add_argument(
         "--changed-files-json",

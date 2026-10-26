@@ -4,8 +4,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from repo_review_agent.analyzer import analyze_repository
-from repo_review_agent.models import AIReview, Finding
+from repo_review_agent.models import AIReview, Finding, ReviewReport
+from repo_review_agent.persistence import restore_report
 from repo_review_agent.pr_bot import build_pr_bot_comment, build_pr_review_diff
+from repo_review_agent.report import public_report_dict
 from repo_review_agent.service import run_review
 
 
@@ -18,6 +20,39 @@ class ResolutionCoverageTests(unittest.TestCase):
         self.source = self.root / 'app.py'
         self.source.write_text('api_key = "sk-' + 'a' * 32 + '"\n')
         self.before = analyze_repository(self.root)
+
+    def test_large_repository_license_fix_is_independent_of_content_limits(self):
+        from repo_review_agent.i18n import localize_report
+
+        for index in range(251):
+            (self.root / f'notes_{index}.md').write_text('Documentation\n')
+        (self.root / 'LICENSE').write_text('MIT License\n')
+        for max_files in (500, 1):
+            after = analyze_repository(self.root, max_files=max_files)
+            self.assertFalse(after.metrics['review_coverage']['rules_complete'])
+            for language in ('en', 'zh-CN'):
+                with self.subTest(max_files=max_files, language=language):
+                    previous = localize_report(self.before, language)
+                    current = localize_report(after, language)
+                    license_finding = next(f for f in previous.findings if f.evidence_paths == ['LICENSE'])
+                    diff = build_pr_review_diff(current, previous)
+                    self.assertIn(license_finding.title, [f.title for f in diff.resolved_findings])
+                    self.assertFalse(any(f.category == 'security' for f in diff.resolved_findings))
+
+    def test_incomplete_inventory_and_changed_policy_do_not_resolve_license(self):
+        from unittest.mock import patch
+
+        from repo_review_agent.scanner import scan_repository
+
+        (self.root / 'LICENSE').write_text('MIT License\n')
+        snapshot = replace(scan_repository(self.root), inventory_complete=False)
+        with patch('repo_review_agent.analyzer.scan_repository', return_value=snapshot):
+            after = analyze_repository(self.root)
+        self.assertNotIn('Add an explicit open-source license',
+                         [f.title for f in build_pr_review_diff(after, self.before).resolved_findings])
+        after = analyze_repository(self.root, max_files=1)
+        after = replace(after, metrics={**after.metrics, 'policy_config': {'disabled_categories': ['project hygiene']}})
+        self.assertEqual(build_pr_review_diff(after, self.before).resolved_findings, [])
 
     def test_partial_scan_keeps_missing_risk_unverified(self):
         after = analyze_repository(self.root, max_files=1)
@@ -132,3 +167,30 @@ class ResolutionCoverageTests(unittest.TestCase):
         diff = build_pr_review_diff(after, before)
         self.assertFalse(any(f.rule_id == 'dependency.osv' for f in diff.resolved_findings))
         self.assertTrue(any(f.rule_id == 'dependency.osv' for f in diff.unverified_findings))
+
+    def test_compressed_api_report_cannot_claim_ai_resolution(self):
+        finding = Finding('AI risk', 'high', 'code', ['x'], 'Fix', ['app.py'], source='ai')
+        coverage = {'version': 1, 'inventory_complete': True,
+                    'inventory_paths': ['app.py'], 'rules_complete': True}
+        previous = ReviewReport('repo', '', [], {'review_coverage': coverage}, {}, [finding])
+        current = ReviewReport('repo', '', [], {'review_coverage': coverage}, {}, [])
+        compressed = restore_report(public_report_dict(current))
+
+        diff = build_pr_review_diff(compressed, previous)
+
+        self.assertEqual(diff.resolved_findings, [])
+        self.assertEqual([item.title for item in diff.unverified_findings], ['AI risk'])
+
+    def test_explicitly_empty_compressed_inventory_can_still_prove_removal(self):
+        finding = Finding('AI risk', 'high', 'code', ['x'], 'Fix', ['app.py'], source='ai')
+        previous = ReviewReport('repo', '', [], {'review_coverage': {
+            'version': 1, 'inventory_complete': True,
+            'inventory_paths': ['app.py'], 'rules_complete': True}}, {}, [finding])
+        current = ReviewReport('repo', '', [], {'review_coverage': {
+            'version': 1, 'inventory_complete': True,
+            'inventory_paths': [], 'rules_complete': True}}, {}, [])
+        compressed = restore_report(public_report_dict(current))
+
+        diff = build_pr_review_diff(compressed, previous)
+
+        self.assertEqual([item.title for item in diff.resolved_findings], ['AI risk'])

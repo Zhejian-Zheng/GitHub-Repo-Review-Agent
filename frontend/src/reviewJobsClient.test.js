@@ -1,8 +1,23 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { waitForReviewJob, submitReviewJob } from "./reviewJobsClient";
+import { cancellationTargetsCurrentJob, normalizeTokenBudget, waitForReviewJob, submitReviewJob } from "./reviewJobsClient";
 vi.mock("./authClient", () => ({ authConfig: {}, backendUrl: (path) => path }));
 const reply = (data, status = 200) => new Response(JSON.stringify(data), { status });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+it("only applies a cancellation result to the job and controller it started with", () => {
+  const controller = new AbortController();
+  expect(cancellationTargetsCurrentJob("a", { id: "a" }, controller, controller)).toBe(true);
+  expect(cancellationTargetsCurrentJob("a", { id: "b" }, controller, controller)).toBe(false);
+  expect(cancellationTargetsCurrentJob("a", { id: "a" }, controller, new AbortController())).toBe(false);
+  expect(cancellationTargetsCurrentJob("a", null, controller, controller)).toBe(false);
+});
+it("normalizes invalid and out-of-range token budgets", () => {
+  expect(normalizeTokenBudget(undefined)).toBe(20000);
+  expect(normalizeTokenBudget("")).toBe(20000);
+  expect(normalizeTokenBudget("nope")).toBe(20000);
+  expect(normalizeTokenBudget(100)).toBe(256);
+  expect(normalizeTokenBudget(200000)).toBe(200000);
+  expect(normalizeTokenBudget(999999)).toBe(200000);
+});
 it("retries transient HTTP and network errors and refreshes tokens each poll", async () => {
   const fetch = vi.fn().mockResolvedValueOnce(reply({}, 503)).mockRejectedValueOnce(new TypeError("offline"))
     .mockResolvedValueOnce(reply({ status: "completed", result: { markdown: "done" } }));

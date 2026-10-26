@@ -62,6 +62,37 @@ test("cancel terminates backend job and removes resume state", async ({ page }) 
   await expect(page.locator(".home-status")).toContainText("cancelled");
   await expect(page.getByRole("button", { name: "Resume tracking" })).toHaveCount(0);
 });
+test("a late cancellation response cannot stop a newer review", async ({ page }) => {
+  await setup(page);
+  let submissions = 0;
+  let markCancelStarted;
+  const cancelStarted = new Promise(resolve => { markCancelStarted = resolve; });
+  let releaseCancel;
+  const cancelResponse = new Promise(resolve => { releaseCancel = resolve; });
+  await page.route("**/mock-api/review/jobs", route => {
+    submissions++;
+    return route.fulfill({ json: { job_id: submissions === 1 ? "old-job" : "new-job" } });
+  });
+  await page.route("**/mock-api/review/jobs/old-job", route => route.fulfill({ json: { job_id: "old-job", status: "running", phase: "analyzing" } }));
+  await page.route("**/mock-api/review/jobs/new-job", route => route.fulfill({ json: { job_id: "new-job", status: "running", phase: "analyzing" } }));
+  await page.route("**/mock-api/review/jobs/old-job/cancel", async route => {
+    markCancelStarted();
+    await cancelResponse;
+    await route.fulfill({ json: { job_id: "old-job", status: "cancelled" } });
+  });
+  await page.getByRole("button", { name: "Review repository" }).click();
+  await expect(page.locator(".home-status")).toContainText("Run rule checks");
+  await page.getByRole("button", { name: "Cancel review", exact: true }).click();
+  await cancelStarted;
+  await page.getByRole("button", { name: "Stop tracking" }).click();
+  await expect(page.getByRole("button", { name: "Review repository" })).toBeEnabled();
+  await page.getByRole("button", { name: "Review repository" }).click();
+  await expect(page.locator(".home-status")).toContainText("Run rule checks");
+  releaseCancel();
+  await page.waitForTimeout(200);
+  await expect(page.locator(".home-status")).toContainText("Run rule checks");
+  await expect(page.getByRole("button", { name: "Cancel review", exact: true })).toBeVisible();
+});
 test("finding feedback persists reason and expiry and refreshes effective score", async ({ page }) => {
   await setup(page);
   let feedback;
@@ -215,4 +246,27 @@ test("an expired session without a refresh token returns to sign-in", async ({ p
   await page.goto("/");
   await expect(page.locator(".auth-card")).toBeVisible();
   await expect(page.getByRole("button", { name: "Review repository" })).toHaveCount(0);
+});
+test("signing out during detail load does not leave history refresh disabled", async ({ page }) => {
+  await setup(page);
+  let markDetailStarted;
+  const detailStarted = new Promise(resolve => { markDetailStarted = resolve; });
+  let releaseDetail;
+  const detailResponse = new Promise(resolve => { releaseDetail = resolve; });
+  await page.route("**/mock-api/history/repositories/repo-1", async route => {
+    markDetailStarted();
+    await detailResponse;
+    await route.fulfill({ json: { latestRun: { health_score: 82 }, findings: [], runs: [] } }).catch(() => {});
+  });
+  await page.getByRole("button", { name: "example/project https://github.com/example/project" }).click();
+  await detailStarted;
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.locator(".auth-card")).toBeVisible();
+  await page.route("**/mock-api/history/repositories", route => route.fulfill({ json: { repositories: [] } }));
+  await page.getByLabel("Email", { exact: true }).fill(user.email);
+  await page.getByLabel("Password", { exact: true }).fill("test-password");
+  await page.locator("button.auth-primary-button").click();
+  await expect(page.getByRole("button", { name: "Refresh history" })).toBeEnabled();
+  await expect(page.locator(".project-detail-panel")).not.toContainText("Loading project details");
+  releaseDetail();
 });

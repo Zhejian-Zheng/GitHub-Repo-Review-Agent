@@ -37,12 +37,19 @@ export function useProjectHistory(authSession, ensureFreshSession) {
     detailRequest.current = null;
     listRequest.current?.abort();
     listRequest.current = null;
+    setRepositories([]);
+    setSelectedRepository(null);
+    setProjectDetail(null);
+    setIsHistoryLoading(false);
+    setHistoryError("");
   }, [authSession?.user?.id]);
   useEffect(() => {
     if (!authSession?.access_token) {
       setRepositories([]);
       setSelectedRepository(null);
       setProjectDetail(null);
+      setIsHistoryLoading(false);
+      setHistoryError("");
       return undefined;
     }
 
@@ -142,6 +149,7 @@ export function useProjectHistory(authSession, ensureFreshSession) {
     detailRequest.current?.abort();
     detailRequest.current = null;
     setRepositories([]); setSelectedRepository(null); setProjectDetail(null);
+    setIsHistoryLoading(false); setHistoryError("");
   };
   return { repositories, selectedRepository, projectDetail, isHistoryLoading, historyError,
     loadProjectList, openProjectDetail, updateFeedback, resetHistory };

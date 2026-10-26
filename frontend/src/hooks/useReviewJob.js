@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { clearStoredSession, getValidSession } from "../authClient";
-import { submitReviewJob, waitForReviewJob, cancelReviewJob, askReportQuestion } from "../reviewJobsClient";
+import { submitReviewJob, waitForReviewJob, cancelReviewJob, askReportQuestion, normalizeTokenBudget, cancellationTargetsCurrentJob } from "../reviewJobsClient";
 import { buildDemoReport } from "../demoReport";
 import { renderStaticMarkdown } from "../reportMarkdown";
 
@@ -33,7 +33,10 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
   const [reportJobId, setReportJobId] = useState(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [pendingJob, setPendingJob] = useState(storedPendingJob);
+  const pendingJobRef = useRef(pendingJob);
+  const cancelRequestRef = useRef(0);
   const rememberJob = (job) => {
+    pendingJobRef.current = job;
     setPendingJob(job);
     if (job) sessionStorage.setItem("repo-review-pending-job", JSON.stringify(job));
     else sessionStorage.removeItem("repo-review-pending-job");
@@ -76,6 +79,7 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
     const payload = {
       ...form,
       ai_model: form.ai_model.trim() || null,
+      ai_token_budget: normalizeTokenBudget(form.ai_token_budget),
       save_history: Boolean(session?.access_token),
       history_repo_url: form.target.trim() || null
     };
@@ -150,12 +154,18 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
   };
 
   const cancelReview = async () => {
-    if (!pendingJob || isCancelling) return;
+    const jobToCancel = pendingJobRef.current;
+    if (!jobToCancel || isCancelling) return;
+    const controller = reviewController.current;
+    const cancelRequest = ++cancelRequestRef.current;
     setIsCancelling(true);
     try {
       const session = await ensureFreshSession();
       if (!session?.access_token) throw new Error("Sign in to cancel your review.");
-      const job = await cancelReviewJob(pendingJob.id, session.access_token);
+      const job = await cancelReviewJob(jobToCancel.id, session.access_token);
+      const current = cancellationTargetsCurrentJob(
+        jobToCancel.id, pendingJobRef.current, controller, reviewController.current);
+      if (!current) return;
       if (job.status === "cancelled") {
         reviewController.current?.abort();
         rememberJob(null);
@@ -166,15 +176,20 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
         setStatus(`Review ${job.status}.`);
       }
     } catch (error) {
-      setStatus(error.message);
-    } finally { setIsCancelling(false); }
+      if (cancellationTargetsCurrentJob(
+          jobToCancel.id, pendingJobRef.current, controller, reviewController.current)) {
+        setStatus(error.message);
+      }
+    } finally {
+      if (cancelRequest === cancelRequestRef.current) setIsCancelling(false);
+    }
   };
 
   const askQuestion = async (question) => {
     const session = await ensureFreshSession();
     return askReportQuestion({ ...(reportJobId ? { job_id: reportJobId } : { report }), question,
       provider: form.ai_provider, model: form.ai_model || null, language: form.report_language,
-      token_budget: Math.min(20000, Number(form.ai_token_budget || 20000)) }, session?.access_token);
+      token_budget: Math.min(20000, normalizeTokenBudget(form.ai_token_budget)) }, session?.access_token);
   };
 
   const copyReport = async () => {

@@ -15,11 +15,76 @@ from pydantic import Field
 from .analyzer import analyze_snapshot
 from .config import ReviewConfig, apply_review_config
 from .incremental import diff_summary, normalize_changed_files
-from .models import AgentStep, RepositorySnapshot, ReviewReport
+from .models import AgentStep, Finding, RepositorySnapshot, ReviewReport
 from .redaction import redact_data, redact_text
 from .report import render_markdown
 from .scanner import scan_repository
 from .vulnerabilities import scan_vulnerabilities
+
+
+def _bounded_json_text(value: str, limit: int) -> str:
+    """Bound serialized size, including escaped control characters and quotes."""
+    text = value[:limit]
+    while len(json.dumps(text, ensure_ascii=False)) > limit:
+        text = text[:len(text) // 2]
+    return text
+
+
+def _finding_summary(finding: Finding) -> dict:
+    original = redact_data({
+        'title': finding.title, 'severity': finding.severity,
+        'category': finding.category, 'rule_id': finding.rule_id,
+        'recommendation': finding.recommendation,
+        'evidence_paths': finding.evidence_paths,
+    })
+    summary = dict(original)
+    truncated = []
+    for key, limit in (('title', 400), ('severity', 50), ('category', 150),
+                       ('rule_id', 150), ('recommendation', 1200)):
+        if isinstance(summary[key], str):
+            summary[key] = _bounded_json_text(summary[key], limit)
+            if summary[key] != original[key]:
+                truncated.append(key)
+    # Preserve usable paths verbatim; never invent a path by cutting its suffix.
+    paths = []
+    for path in original['evidence_paths'][:3]:
+        if len(json.dumps([*paths, path], ensure_ascii=False)) <= 1200:
+            paths.append(path)
+    summary['evidence_paths'] = paths
+    if paths != original['evidence_paths']:
+        truncated.append('evidence_paths')
+    summary['truncated_fields'] = truncated
+    return summary
+
+
+def _analysis_page(report: ReviewReport, offset: int, limit: int) -> str:
+    """Allocate the observation budget before serialization, retaining valid JSON."""
+    metrics = {key: report.metrics[key] for key in (
+        'files_scanned', 'files_skipped', 'source_files', 'test_files',
+        'dependency_files', 'ci_files', 'total_size_bytes', 'inventory_complete',
+    ) if key in report.metrics}
+    coverage = report.metrics.get('review_coverage', {})
+    metrics['review_coverage'] = {key: coverage[key] for key in (
+        'version', 'inventory_complete', 'rules_complete', 'ruff_complete',
+    ) if key in coverage}
+    metrics['review_coverage']['inventory_file_count'] = len(coverage.get('inventory_paths', []))
+    metrics['review_coverage']['inventory_paths_elided'] = True
+    priorities = {'high': 0, 'medium': 1, 'low': 2, 'info': 3}
+    findings = sorted(report.findings, key=lambda finding: priorities.get(finding.severity, 4))
+    payload = {
+        'metrics': metrics, 'findings': [], 'total_findings': len(findings),
+        'next_offset': None, 'truncated': False,
+        'continuation': 'Use analyze_repository(offset=next_offset) for more findings; '
+                        'list_files and read_file_lines provide repository evidence.',
+    }
+    for index in range(offset, min(offset + limit, len(findings))):
+        candidate = {**payload, 'findings': [*payload['findings'], _finding_summary(findings[index])],
+                     'next_offset': index + 1 if index + 1 < len(findings) else None,
+                     'truncated': index + 1 < len(findings)}
+        if len(json.dumps(candidate, ensure_ascii=False)) > 6000:
+            break
+        payload = candidate
+    return json.dumps(payload, ensure_ascii=False)
 
 
 class ReviewSession:
@@ -192,26 +257,16 @@ class ReviewSession:
                 return self.record("inspect_file", {"path": path, "max_chars": max_chars}, result)
 
         @tool
-        def analyze_repository() -> str:
-            """Return deterministic findings and metrics; analyze the repository at most once."""
+        def analyze_repository(offset: Annotated[int, Field(ge=0)] = 0,
+                               limit: Annotated[int, Field(ge=1, le=20)] = 20) -> str:
+            """Return severity-ordered findings and compact metrics; continue with next_offset.
+
+            Analysis runs at most once. Results are bounded to 6000 characters of valid
+            JSON. truncated_fields identifies shortened text or omitted evidence paths.
+            """
             with self._lock:
-                report = self.current_report()
-                result = json.dumps(
-                    {
-                        "metrics": report.metrics,
-                        "findings": [
-                            {
-                                "title": f.title,
-                                "severity": f.severity,
-                                "evidence_paths": f.evidence_paths,
-                                "recommendation": f.recommendation,
-                            }
-                            for f in report.findings[:20]
-                        ],
-                    },
-                    ensure_ascii=False,
-                )[:6000]
-                return self.record("analyze_repository", {}, result)
+                result = _analysis_page(self.current_report(), offset, limit)
+                return self.record("analyze_repository", {"offset": offset, "limit": limit}, result)
 
         @tool
         def generate_report(format: Literal["markdown"] = "markdown") -> str:

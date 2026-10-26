@@ -9,14 +9,22 @@ from pydantic import BaseModel, Field, field_validator
 from .security import int_from_env
 
 
+def _default_max_files() -> int:
+    return min(500, int_from_env("REPO_REVIEW_MAX_FILES_LIMIT", 1000, minimum=1))
+
+
+def _default_max_file_size() -> int:
+    return min(512_000, int_from_env("REPO_REVIEW_MAX_FILE_SIZE_LIMIT", 1_000_000, minimum=1024))
+
+
 class ReviewRequest(BaseModel):
     target: str = Field(..., description="Local repository path or GitHub URL.")
     mode: Literal["direct", "agent", "function-calling"] = "agent"
     ai_provider: Literal["none", "openai", "openrouter", "anthropic", "ollama"] = "none"
     ai_model: str | None = None
     report_language: Literal["en", "zh-CN"] = "en"
-    max_files: int = Field(500, ge=1)
-    max_file_size: int = Field(512_000, ge=1_024)
+    max_files: int = Field(default_factory=_default_max_files, ge=1)
+    max_file_size: int = Field(default_factory=_default_max_file_size, ge=1_024)
     ai_token_budget: int = Field(20_000, ge=256, le=200_000)
     vulnerability_scan: bool = False
     lint: bool = False

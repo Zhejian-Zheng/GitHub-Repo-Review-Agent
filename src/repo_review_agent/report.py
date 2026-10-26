@@ -3,11 +3,53 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from .findings import effective_findings, review_findings
 from .i18n import localize_report, normalize_report_language
 from .models import Finding, ReviewReport
 from .redaction import redact_text
+
+
+def public_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Return display/AI metrics without the full repository inventory path list.
+
+    The complete inventory is still persisted for history resolution, but it is
+    large enough to exceed API limits and to crowd findings out of model prompts.
+    Only its size is useful to presentation and synthesis callers.
+    """
+    result = dict(metrics)
+    coverage = result.get("review_coverage")
+    if isinstance(coverage, dict):
+        compact = dict(coverage)
+        if "inventory_paths" in compact:
+            paths = compact["inventory_paths"]
+            count = len(paths) if isinstance(paths, list) else 0
+            compact["inventory_file_count"] = count
+            if isinstance(paths, list) and not paths:
+                # Keep a known-empty inventory distinguishable from a missing one.
+                compact["inventory_paths"] = []
+            else:
+                compact.pop("inventory_paths", None)
+                # The report no longer carries enough evidence to prove deletion.
+                compact["inventory_paths_elided"] = True
+        result["review_coverage"] = compact
+    return result
+
+
+def public_report_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Copy a serialized report and remove the internal inventory path list."""
+    result = dict(data)
+    metrics = result.get("metrics")
+    if isinstance(metrics, dict):
+        result["metrics"] = public_metrics(metrics)
+    return result
+
+
+def public_report_dict(report: ReviewReport) -> dict[str, Any]:
+    """Serialize a report for HTTP clients and model prompts, not persistence."""
+    return public_report_data(report.to_dict())
+
 
 REPORT_LABELS = {
     "en": {

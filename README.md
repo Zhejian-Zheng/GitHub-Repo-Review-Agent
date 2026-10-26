@@ -75,6 +75,8 @@ repo-review . --agent --ai-provider none  # No model, network or API key require
 
 The agent prepares the baseline report before contacting the model. Each run owns its repository state. Tool reads are limited to scanned files inside the repository, exclude `.env` files, and accept at most 8,000 characters per call. Tool results and the initial report context are bounded. Default limits are 8 model calls and 12 repository tool calls, with no SDK retries; `RepoReviewAgent(max_turns=..., max_tool_calls=...)` can customize these. The offline `max_steps` budget is separate. API request timeouts and output token limits still apply.
 
+The analysis tool returns valid JSON within 6,000 characters, prioritizes high-severity findings, and exposes `next_offset` for additional findings. It summarizes inventory counts; full paths remain available through `list_files`. Any shortened finding fields are marked explicitly.
+
 New AI output must contain four non-empty string lists: `architecture_summary`, `risks`, `project_highlights`, and `next_steps`. Direct synthesis allows one format-repair request; agent repairs share its model-call budget. Invalid output, unsupported tool calling and exhausted budgets never produce a successful AI status. Normal agent runs preserve the base report and attach an AI error; `--fail-on-ai-error` raises instead. Legacy `--function-calling` and `--chatgpt-agent` keep strict error behavior and their provider labels. Historical Markdown/JSON parsing remains supported.
 
 See [LangChain agents](https://docs.langchain.com/oss/python/langchain/agents) and the [migration design](docs/superpowers/specs/2026-09-20-langchain-rebuild-design.md).
@@ -222,9 +224,16 @@ repo-review . --agent --report-language zh-CN --output review-report.zh.md
 
 Save review history to Supabase:
 
-1. Open your Supabase SQL Editor and run [`supabase/schema.sql`](supabase/schema.sql).
-   If you created the project with an earlier version of this schema, run it again or run the migrations in [`supabase/migrations`](supabase/migrations), including [`002_repository_ownership_hardening.sql`](supabase/migrations/002_repository_ownership_hardening.sql), [`003_review_jobs.sql`](supabase/migrations/003_review_jobs.sql), and [`004_table_privileges.sql`](supabase/migrations/004_table_privileges.sql). These upgrades add per-user repository isolation, cascade owner cleanup, project-list indexes, the persistent `review_jobs` table used by the hosted web API, and the Supabase role grants required by the backend.
-2. Run [`supabase/verify_history_schema.sql`](supabase/verify_history_schema.sql) in the SQL Editor. Every row should return `status = pass`.
+1. For a new project, run [`supabase/schema.sql`](supabase/schema.sql) once, then apply **every file** in [`supabase/migrations`](supabase/migrations) in filename order. Existing projects must apply every migration they have not run yet, starting with the first missing file. The current backend needs at least these upgrades:
+   [`20261004_review_job_leases.sql`](supabase/migrations/20261004_review_job_leases.sql),
+   [`20261005_finding_lifecycle.sql`](supabase/migrations/20261005_finding_lifecycle.sql),
+   [`20261005_job_controls.sql`](supabase/migrations/20261005_job_controls.sql),
+   [`20261006_atomic_history.sql`](supabase/migrations/20261006_atomic_history.sql),
+   [`20261008_resolution_coverage.sql`](supabase/migrations/20261008_resolution_coverage.sql),
+   [`20261020_question_capacity.sql`](supabase/migrations/20261020_question_capacity.sql), and
+   [`20261021_resolution_elided_paths.sql`](supabase/migrations/20261021_resolution_elided_paths.sql).
+   `schema.sql` is only the legacy bootstrap; it does not contain the job lease, lifecycle, atomic history, resolution coverage or question capacity changes.
+2. Run [`supabase/verify_history_schema.sql`](supabase/verify_history_schema.sql) in the SQL Editor. Every row should return `status = pass`; this now checks the columns, tables, RPCs and RLS added by the migrations above.
 3. Set server-side environment variables:
 
 ```bash
@@ -630,9 +639,9 @@ Review jobs support owner cancellation and daily admission quotas. AI reviews sh
 
 Use `--changed-files-json pr-files.json` to prioritize PR changes during review, then generate GitHub Checks annotations with the PR bot's dry-run/create modes. Configure project rules through `.repo-review.json`. Run the labeled quality dataset with `repo-review-evaluate` and optionally send numeric evaluation scores to Langfuse.
 
-Before deploying the coverage-aware history update, apply `supabase/migrations/20261008_resolution_coverage.sql` after the atomic-history migration; see [migration details](docs/atomic-history.md). Partial scans now retain absent findings as unverified instead of claiming they were resolved.
+Before deploying the current backend, apply every migration in `supabase/migrations` in filename order through `20261021_resolution_elided_paths.sql`. This includes job leases, finding lifecycle, job controls, atomic history, resolution coverage, question capacity and compressed-report resolution safeguards. Partial scans now retain absent findings as unverified instead of claiming they were resolved; see [migration details](docs/atomic-history.md) and [question capacity](docs/question-capacity.md).
 
-See the [feature guide](docs/feature-expansion.md), [evaluation guide](docs/evaluation.md), and [next improvement review](docs/next-improvements.md). New deployments must apply both `20261005` migrations after the job lease migration.
+See the [feature guide](docs/feature-expansion.md), [evaluation guide](docs/evaluation.md), and [next improvement review](docs/next-improvements.md). Run `supabase/verify_history_schema.sql` after deploying migrations; it fails if a required table, column or RPC is missing.
 
 ### Reliability and maintenance updates
 

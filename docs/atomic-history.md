@@ -1,6 +1,6 @@
 # Atomic history persistence
 
-Updated 2026-10-08. History saves now require `supabase/migrations/20261006_atomic_history.sql`, applied **after** migrations 001–004, `20261004_review_job_leases.sql`, `20261005_finding_lifecycle.sql` and `20261005_job_controls.sql`. Also apply `20261008_resolution_coverage.sql` after `20261006_atomic_history.sql` for coverage-aware resolution. Run migrations before deploying this version. No remote migration has been applied by this task.
+Updated 2026-10-08. History saves now require `supabase/migrations/20261006_atomic_history.sql`, applied **after** migrations 001–004, `20261004_review_job_leases.sql`, `20261005_finding_lifecycle.sql` and `20261005_job_controls.sql`. Also apply `20261008_resolution_coverage.sql` after `20261006_atomic_history.sql` for coverage-aware resolution, followed by `20261021_resolution_elided_paths.sql` so compressed API reports cannot prove file deletion. Apply `20261023_inventory_rule_coverage.sql` next so completed inventory-only checks can resolve independently of content limits. Run migrations before deploying this version. No remote migration has been applied by this task.
 
 `SupabaseHistoryStore.save_report` sends one safe payload to `save_review_history`. A transaction writes the repository, run, findings, AI result and operation receipt. Failed writes leave no partially completed report. Concurrent saves of the same repository are serialized for a consistent comparison baseline; existing owner-scoped unique indexes protect repository creation.
 

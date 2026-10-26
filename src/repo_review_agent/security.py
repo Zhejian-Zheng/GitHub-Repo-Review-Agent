@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import os
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from threading import Lock
 from urllib.parse import urlparse
 
@@ -41,7 +41,8 @@ def int_from_env(name: str, default: int, *, minimum: int | None = None) -> int:
 
 def is_github_https_url(target: str) -> bool:
     parsed = urlparse(target.strip())
-    if parsed.scheme not in {"http", "https"}:
+    # Public demo mode must not clone over plaintext HTTP.
+    if parsed.scheme != "https":
         return False
 
     host = parsed.netloc.lower()
@@ -88,18 +89,37 @@ def client_identifier(
     *,
     trust_forwarded: bool = True,
 ) -> str:
+    """Return a bounded rate-limit key.
+
+    Only trust forwarding headers when every request passes through a proxy that
+    overwrites them. Prefer X-Real-IP, which nginx and many platforms set from the
+    actual peer; otherwise fall back to the first X-Forwarded-For value.
+    """
     if trust_forwarded:
+        real_ip = headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return real_ip[:128]
+
         forwarded_for = headers.get("x-forwarded-for", "")
         if forwarded_for:
-            return forwarded_for.split(",", maxsplit=1)[0].strip()
+            return forwarded_for.split(",", maxsplit=1)[0].strip()[:128]
     return fallback_host or "unknown"
 
 
 class InMemoryRateLimiter:
-    def __init__(self, *, limit_per_minute: int, window_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        *,
+        limit_per_minute: int,
+        window_seconds: int = 60,
+        max_keys: int = 10_000,
+    ) -> None:
         self.limit_per_minute = max(0, limit_per_minute)
         self.window_seconds = window_seconds
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self.max_keys = max(1, max_keys)
+        # Insertion order is the LRU order; a single global key cap prevents
+        # spoofed client identifiers from growing this map without bound.
+        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = Lock()
         self._last_sweep = 0.0
 
@@ -113,7 +133,15 @@ class InMemoryRateLimiter:
         with self._lock:
             self._evict_stale(earliest_allowed, current_time)
 
-            hits = self._hits[key]
+            hits = self._hits.get(key)
+            if hits is None:
+                while len(self._hits) >= self.max_keys:
+                    self._hits.popitem(last=False)
+                hits = deque()
+                self._hits[key] = hits
+            else:
+                self._hits.move_to_end(key)
+
             while hits and hits[0] <= earliest_allowed:
                 hits.popleft()
 

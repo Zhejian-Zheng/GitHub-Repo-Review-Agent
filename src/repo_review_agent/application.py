@@ -8,7 +8,7 @@ from pathlib import Path
 from .auth import AuthUser
 from .history import SupabaseHistoryStore
 from .i18n import localize_report
-from .report import render_markdown
+from .report import public_report_dict, render_markdown
 from .requests import ReviewRequest
 from .service import run_review
 from .targets import resolve_target
@@ -43,7 +43,7 @@ def execute_review_request(request: ReviewRequest, user: AuthUser | None,
     report = localize_report(report, request.report_language)
     response = {
         "markdown": render_markdown(report, language=request.report_language),
-        "report": report.to_dict(),
+        "report": public_report_dict(report),
     }
     if pending_history is not None:
         response["_pending_history"] = pending_history

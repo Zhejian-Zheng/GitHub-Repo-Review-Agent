@@ -6,6 +6,7 @@ import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -391,6 +392,31 @@ class AtomicHistoryIntegrationTests(unittest.TestCase):
             self.assertEqual(result['resolved_findings_count'], 0)
             self.assertEqual(result['unverified_findings_count'], 1)
 
+    def test_large_repository_inventory_fix_resolves_in_saved_history(self):
+        from repo_review_agent.analyzer import analyze_repository
+        from repo_review_agent.i18n import localize_report
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'app.py').write_text('api_key = "sk-' + 'a' * 32 + '"\n')
+            for index in range(251):
+                (root / f'notes_{index}.md').write_text('Notes\n')
+            before = analyze_repository(root)
+            (root / 'LICENSE').write_text('MIT License\n')
+            after = analyze_repository(root, max_files=1)
+        self.assertFalse(after.metrics['review_coverage']['rules_complete'])
+        for language in ('en', 'zh-CN'):
+            with self.subTest(language=language):
+                value = payload()
+                value['repo_url'] = f'owner/repo-{language}'
+                value['report'] = localize_report(before, language).to_dict()
+                self.save(value)
+                value['report'] = localize_report(after, language).to_dict()
+                result = self.save(value)
+                self.assertEqual(result['resolved_findings_count'], 1)
+                self.assertEqual(result['unverified_findings_count'], 1)
+                self.assertEqual(self.save(value)['unverified_findings_count'], 1)
+
     def test_resolution_decisions_match_python_for_optional_checks_and_deletion(self):
         from repo_review_agent.models import Finding, ReviewReport
         from repo_review_agent.resolution import finding_rechecked
@@ -408,8 +434,26 @@ class AtomicHistoryIntegrationTests(unittest.TestCase):
             ('rule', 'Vulnerability', 'dependency.osv', {'vulnerability_scan': {'status': 'clean'}}, {**coverage, 'inventory_complete': False}, False),
             ('rule', 'Risk', None, {'policy_config': {'ignore': ['vendor/**']}}, coverage, False),
             ('ai', 'AI risk', None, {}, {**coverage, 'rules_complete': False, 'inventory_paths': []}, True),
+            ('ai', 'AI risk', None, {}, {'version': 1, 'inventory_complete': True,
+                                        'inventory_paths_elided': True, 'rules_complete': True}, False),
             ('rule', 'Risk', None, {}, {**coverage, 'rules_complete': False, 'inventory_complete': False, 'inventory_paths': []}, False),
             ('rule', 'Risk', None, {}, {}, False),
+            ('rule', 'Inventory check', None, {}, {**coverage, 'rules_complete': False,
+                'completed_rules': ['Inventory check']}, True),
+            ('rule', 'Content check', None, {}, {**coverage, 'rules_complete': False,
+                'completed_rules': ['Inventory check']}, False),
+            ('ai', 'Inventory check', None, {}, {**coverage, 'rules_complete': False,
+                'completed_rules': ['Inventory check']}, False),
+            ('rule', 'Inventory check', None, {'policy_config': {'disabled_rules': ['Inventory check']}},
+                {**coverage, 'rules_complete': False, 'completed_rules': ['Inventory check']}, False),
+            ('rule', 'Inventory check', None, {}, {**coverage, 'rules_complete': False,
+                'completed_rules': 'Inventory check'}, False),
+            ('rule', 'Inventory check', None, {}, {**coverage, 'rules_complete': False,
+                'completed_rules': {'Inventory check': True}}, False),
+            ('rule', 'Inventory check', 'dependency.osv', {}, {**coverage, 'rules_complete': False,
+                'completed_rules': ['Inventory check']}, False),
+            ('rule', 'Fix 1 Ruff F821 lint finding(s)', None, {}, {**coverage, 'rules_complete': False,
+                'completed_rules': ['Fix 1 Ruff F821 lint finding(s)']}, False),
         ]
         for source, title, rule, extra, current_coverage, expected in cases:
             with self.subTest(source=source, title=title, extra=extra, coverage=current_coverage):
@@ -422,3 +466,12 @@ class AtomicHistoryIntegrationTests(unittest.TestCase):
                 sql_result = self.db.execute('select review_finding_rechecked(%s,%s)',
                                              (Jsonb(current.to_dict()), Jsonb(row))).fetchone()[0]
                 self.assertIs(sql_result, expected)
+
+    def test_schema_verifier_reports_no_failures(self):
+        sql = (ROOT / "supabase" / "verify_history_schema.sql").read_text(encoding="utf-8")
+
+        rows = self.db.execute(sql).fetchall()
+
+        self.assertTrue(rows)
+        failures = [row[0] for row in rows if row[1] != "pass"]
+        self.assertEqual(failures, [])

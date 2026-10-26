@@ -18,7 +18,7 @@ from .auth import AuthUser
 from .history import HistoryStoreError, SupabaseReviewJobStore
 from .job_runtime import run_isolated
 from .question_runtime import QuestionCapacityError, QuestionRuntime
-from .report import render_markdown
+from .report import public_report_data, render_markdown
 from .requests import ReviewRequest
 from .security import int_from_env
 
@@ -411,11 +411,18 @@ def _job_from_supabase_row(row: dict[str, Any]) -> ReviewJob:
     if result is not None and not isinstance(result, dict):
         raise HistoryStoreError("Supabase review job result_json must be an object.")
 
-    if result and "history" in result and isinstance(result.get("report"), dict):
-        from .persistence import restore_report
-        result = {**result, "markdown": render_markdown(
-            restore_report(result["report"]),
-            language=(row.get("request_json") or {}).get("report_language", "en"))}
+    if result is not None:
+        # Never return the internal history envelope or the full inventory list
+        # through a job poll; both can be large and are not client data.
+        result = {key: value for key, value in result.items() if key != "_pending_history"}
+        request_payload = row.get("request_json")
+        language = request_payload.get("report_language", "en") if isinstance(request_payload, dict) else "en"
+        if "history" in result and isinstance(result.get("report"), dict):
+            from .persistence import restore_report
+            result = {**result, "markdown": render_markdown(
+                restore_report(result["report"]), language=language)}
+        if isinstance(result.get("report"), dict):
+            result = {**result, "report": public_report_data(result["report"])}
 
     return ReviewJob(
         id=str(row.get("id") or ""),

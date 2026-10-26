@@ -141,6 +141,21 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(report.findings[0].severity, "high")
         self.assertEqual(report.findings[0].evidence_paths, ["app.py"])
 
+    def test_analyzer_detects_secret_like_values_in_ci_workflow(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Example\n", encoding="utf-8")
+            (root / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            workflow = root / ".github" / "workflows" / "ci.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text('env:\n  TOKEN: "1234567890abcdef"\n', encoding="utf-8")
+
+            report = analyze_repository(root)
+
+        secret = next(finding for finding in report.findings
+                      if finding.title == "Remove possible hard-coded secrets")
+        self.assertEqual(secret.evidence_paths, [".github/workflows/ci.yml"])
+
     def test_analyzer_ignores_secret_placeholders(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

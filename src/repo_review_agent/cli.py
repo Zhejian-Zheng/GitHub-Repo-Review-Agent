@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
                     repo_url=_history_repo_identifier(args, repo_path),
                     branch=args.history_branch or _git_output(repo_path, "rev-parse", "--abbrev-ref", "HEAD"),
                     commit_sha=args.history_commit_sha or _git_output(repo_path, "rev-parse", "HEAD"),
-                    report_markdown=render_markdown(report, language="en"),
+                    report_markdown=render_markdown(report, language=args.report_language),
                 )
             except HistoryStoreError as exc:
                 raise SystemExit(str(exc)) from exc

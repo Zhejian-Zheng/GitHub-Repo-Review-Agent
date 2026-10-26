@@ -13,6 +13,63 @@ from .provider import AIProviderError, create_chat_model, message_text, provider
 from .redaction import redact_data, redact_text
 from .telemetry import review_tracing
 
+# Generic follow-ups may refer to the report as a whole. These terms should not
+# make unrelated evidence match a specific technical question.
+_QUESTION_WORDS = {
+    'a', 'an', 'the', 'i', 'we', 'you', 'it', 'this', 'that', 'these', 'those',
+    'is', 'are', 'was', 'were', 'be', 'do', 'does', 'did', 'how', 'what', 'why',
+    'where', 'when', 'can', 'could', 'should', 'would', 'to', 'of', 'in', 'on',
+    'for', 'with', 'and', 'or', 'my', 'me', 'please', 'explain', 'fix', 'repair',
+    'review', 'report', 'issue', 'issues', 'problem', 'problems', 'risk', 'risks',
+    'top', 'main', 'first', 'important', 'summarize', 'summary', 'overview', 'all',
+    'any', 'there',
+}
+_QUESTION_ZH = ('为什么', '怎么', '如何', '请问', '请', '解释', '修复', '解决',
+                '这个', '这些', '这份', '有什么', '有哪些', '哪些', '什么', '总结',
+                '概述', '应该', '优先', '主要', '问题', '风险', '报告', '一下', '的', '？')
+_TERM_ALIASES = {
+    '注入': ('injection',), '数据库': ('database', 'sql'),
+    '测试': ('test', 'tests', 'testing'), '依赖': ('dependency', 'dependencies'),
+    '密钥': ('secret', 'secrets', 'credentials'), '许可证': ('license',),
+    '权限': ('permission', 'permissions'), '认证': ('authentication', 'auth'),
+    '日志': ('logging', 'logger'), '漏洞': ('vulnerability', 'vulnerabilities'),
+}
+
+
+def _search_terms(text: str) -> set[str]:
+    """Split mixed scripts, retaining paths/identifiers and Chinese word fragments."""
+    text = text.lower()
+    terms = set(re.findall(r'[a-z0-9_]+(?:[./-][a-z0-9_]+)*', text))
+    # Components make "SQL" match security.sql-injection without substring
+    # matches such as "ci" in "explicit". Ignore file suffixes as search terms.
+    terms.update(re.findall(r'[a-z0-9]+', text))
+    terms -= _QUESTION_WORDS | {'py', 'js', 'ts', 'jsx', 'tsx', 'md'}
+    for phrase in _QUESTION_ZH:
+        text = text.replace(phrase, ' ')
+    for run in re.findall(r'[\u3400-\u9fff]+', text):
+        terms.add(run)
+        terms.update(run[i:i + 2] for i in range(len(run) - 1))
+    for phrase, aliases in _TERM_ALIASES.items():
+        if phrase in text or terms.intersection(aliases):
+            terms.add(phrase)
+            terms.update(aliases)
+    return terms
+
+
+def _select_evidence(candidates: list[dict], question: str) -> list[dict]:
+    terms = _search_terms(question)
+    if not terms:
+        return candidates[:8]
+    scored = []
+    for candidate in candidates:
+        text = ' '.join(candidate[key] for key in (
+            'path', 'title', 'evidence', 'recommendation', 'category', 'rule_id'))
+        score = len(terms & _search_terms(text))
+        if score:
+            scored.append((score, candidate))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [candidate for _, candidate in scored[:8]]
+
 
 class Answer(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -29,7 +86,7 @@ def _evidence(report: dict) -> list[dict]:
     ai_findings = (ai or {}).get('findings', [])
     if not isinstance(ai_findings, list):
         raise ValueError('AI review findings must be a list.')
-    raw = findings[:100] + ai_findings[:20]
+    raw = findings[:100] + ([] if report.get('findings_canonical') is True else ai_findings[:20])
     seen = set()
     for finding in raw:
         if not isinstance(finding, dict):
@@ -54,6 +111,8 @@ def _evidence(report: dict) -> list[dict]:
         seen.add(key)
         candidates.append({'path':path,'start_line':start,'end_line':end,'evidence':quote,
                            'title':str(finding.get('title','Finding'))[:500],
+                           'category':str(finding.get('category') or '')[:200],
+                           'rule_id':str(finding.get('rule_id') or '')[:200],
                            'recommendation':str(finding.get('recommendation',''))[:4000]})
     return candidates
 
@@ -64,10 +123,7 @@ def answer_report_question(report: dict, question: str, *, provider: str = 'none
         raise ValueError('Report must be an object no larger than 200 KB.')
     if not question.strip() or len(question) > 2000:
         raise ValueError('Question must contain between 1 and 2000 characters.')
-    candidates = _evidence(redact_data(report))
-    words = set(re.findall(r'\w+', question.lower()))
-    candidates.sort(key=lambda c: -sum(word in (c['title']+' '+c['evidence']+' '+c['recommendation']).lower() for word in words))
-    candidates = candidates[:8]
+    candidates = _select_evidence(_evidence(redact_data(report)), question)
     limitations = (['回答仅依据已有报告，未重新读取仓库，也未确认修复效果。'] if language == 'zh-CN'
                    else ['Answers use the existing report only; no fresh repository inspection or fix verification was performed.'])
     if provider == 'none':
