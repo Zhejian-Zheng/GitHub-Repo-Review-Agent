@@ -10,7 +10,7 @@ uv sync --locked --all-extras --python 3.12
 uv run --locked python -m unittest discover -s tests
 ```
 
-CI tests Python 3.10 (the declared floor) and 3.12 (the production interpreter). Frontend/browser and Docker build steps run once on 3.12. PostgreSQL integration tests use locked dependencies in a separate job. Both images install `--no-editable --extra all`; their `/app/.venv/bin` is on PATH for the existing commands. Native OS packages and base image tags are outside the Python lock; this is not a bit-for-bit image reproducibility claim. The PR bot still installs from its trusted base checkout, which may predate this lock.
+CI tests Python 3.10 (the declared floor) and 3.12 (the production interpreter). Frontend/browser and Docker build steps run once on 3.12. PostgreSQL integration tests use locked dependencies in a separate job. Both images install `--no-editable --extra all`; their `/app/.venv/bin` is on PATH for the existing commands. Native OS packages and base image tags are outside the Python lock; this is not a bit-for-bit image reproducibility claim. The PR bot installs the locked core dependencies from its trusted base checkout; head-checkout dependency changes never execute in the review process.
 
 For an intentional dependency update:
 

@@ -5,12 +5,14 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from http.client import HTTPException
 from typing import Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from .findings import feedback_active, finding_fingerprint
+from .http import credential_urlopen as urlopen
 from .models import Finding, ReviewReport
 from .persistence import history_payload
 from .redaction import redact_data, redact_text
@@ -418,15 +420,21 @@ class SupabaseHistoryStore:
             with urlopen(request, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
+            exc.close()
             raise HistoryStoreError(
                 f"Supabase request failed ({exc.code}). Check credentials and database migrations."
             ) from exc
-        except URLError as exc:
+        except (URLError, OSError, HTTPException) as exc:
             raise HistoryStoreError("Supabase request failed. Check storage connectivity.") from exc
+        except UnicodeError as exc:
+            raise HistoryStoreError("Supabase returned an invalid response encoding.") from exc
 
         if not raw.strip():
             return None
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except (ValueError, RecursionError) as exc:
+            raise HistoryStoreError("Supabase returned an invalid JSON response.") from exc
 
 
 class SupabaseReviewJobStore(SupabaseHistoryStore):

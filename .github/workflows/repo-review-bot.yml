@@ -7,6 +7,11 @@ on:
     - cron: "30 8 * * 1"
   workflow_dispatch:
 
+# A superseded head must not overwrite the sticky comment for a newer commit.
+concurrency:
+  group: repo-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   issues: write
@@ -43,7 +48,10 @@ jobs:
 
       - name: Install review agent
         working-directory: base
-        run: python -m pip install -e .
+        run: |
+          python -m pip install "uv==0.10.12"
+          uv sync --locked --no-dev --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Analyze base branch
         run: repo-review ./base --json baseline-report.json --output baseline-report.md --max-files 1000
@@ -90,7 +98,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install review agent
-        run: python -m pip install -e .
+        run: |
+          python -m pip install "uv==0.10.12"
+          uv sync --locked --no-dev --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Analyze main branch
         run: repo-review . --json review-report.json --output review-report.md --max-files 1000

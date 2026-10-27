@@ -100,9 +100,21 @@ def run_isolated(request: dict, user: dict | None, *, timeout: float,
             output = root / "output.json"
             if not output.exists():
                 raise RuntimeError("Review worker exited without a result.")
-            result = json.loads(output.read_text(encoding="utf-8"))
-            if "error" in result:
-                raise RuntimeError(result["error"])
+            if proc.returncode != 0:
+                raise RuntimeError("Review worker exited unsuccessfully.")
+            try:
+                result = json.loads(output.read_text(encoding="utf-8"))
+            except (OSError, ValueError, RecursionError) as exc:
+                raise RuntimeError("Review worker returned an invalid result.") from exc
+            # A valid envelope has exactly one outcome. Never publish a malformed
+            # success as a completed job or persist arbitrary validation input.
+            if not isinstance(result, dict):
+                raise RuntimeError("Review worker returned an invalid result.")
+            if set(result) == {"error"} and isinstance(result["error"], str):
+                from .redaction import redact_text
+                raise RuntimeError(redact_text(result["error"]))
+            if set(result) != {"result"} or not isinstance(result["result"], dict):
+                raise RuntimeError("Review worker returned an invalid result.")
             return result["result"]
         finally:
             monitor_done.set()
