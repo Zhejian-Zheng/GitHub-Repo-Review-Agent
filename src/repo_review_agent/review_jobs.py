@@ -322,9 +322,10 @@ class SupabaseBackedReviewJobStore(BaseReviewJobStore):
                     request = ReviewRequest(**row["request_json"])
                     user = AuthUser(id=row["owner_id"]) if row.get("owner_id") else None
                     self._dispatch(job_id, request, user)
-                except Exception as exc:
+                except Exception:
                     try:
-                        self._set_failed(job_id, str(exc))
+                        # Pydantic validation text includes the original stored input.
+                        self._set_failed(job_id, "Review job could not be started. Check the stored request and worker availability.")
                     finally:
                         self._leases.pop(job_id, None)
 

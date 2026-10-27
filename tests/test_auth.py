@@ -82,7 +82,7 @@ class AuthTests(unittest.TestCase):
             )
 
         self.assertIn("401", str(http_context.exception))
-        self.assertIn("bad token", str(http_context.exception))
+        self.assertNotIn("bad token", str(http_context.exception))
 
         mock_urlopen.side_effect = URLError("offline")
         with self.assertRaises(AuthError) as url_context:
@@ -92,7 +92,7 @@ class AuthTests(unittest.TestCase):
                 anon_key="anon-key",
             )
 
-        self.assertIn("offline", str(url_context.exception))
+        self.assertNotIn("offline", str(url_context.exception))
 
     @patch("repo_review_agent.auth.urlopen")
     def test_get_supabase_user_rejects_invalid_payload(self, mock_urlopen) -> None:

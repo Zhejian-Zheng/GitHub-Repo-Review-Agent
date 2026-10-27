@@ -315,7 +315,13 @@ def authenticated_user_from_request(http_request: Request, *, required: bool | N
         required = bool_from_env("REPO_REVIEW_REQUIRE_AUTH", False)
 
     token = bearer_token_from_headers(http_request.headers)
-    if not token:
+    expected_api_token = os.environ.get("REPO_REVIEW_API_TOKEN")
+    api_only = bool(expected_api_token) and request_token_matches(
+        {"authorization": f"Bearer {token}"}, expected_api_token
+    )
+    # The shared API credential authorizes API use, never a Supabase identity.
+    # With required login, callers still need a user JWT plus the custom API header.
+    if not token or api_only:
         if required:
             raise HTTPException(status_code=401, detail="Sign in is required.")
         return None
@@ -342,7 +348,7 @@ def enforce_api_access_controls(http_request: Request) -> None:
     client_id = client_identifier(
         http_request.headers,
         getattr(client, "host", None) if client else None,
-        trust_forwarded=bool_from_env("REPO_REVIEW_TRUST_FORWARDED_FOR", True),
+        trust_forwarded=bool_from_env("REPO_REVIEW_TRUST_FORWARDED_FOR", False),
     )
     if not WEB_RATE_LIMITER.allow(client_id):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")

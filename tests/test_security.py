@@ -60,7 +60,7 @@ class SecurityTests(unittest.TestCase):
 
     def test_client_identifier_prefers_forwarded_for(self) -> None:
         self.assertEqual(
-            client_identifier({"x-forwarded-for": "203.0.113.1, 10.0.0.1"}, "127.0.0.1"),
+            client_identifier({"x-forwarded-for": "203.0.113.1, 10.0.0.1"}, "127.0.0.1", trust_forwarded=True),
             "203.0.113.1",
         )
         self.assertEqual(client_identifier({}, "127.0.0.1"), "127.0.0.1")
@@ -71,10 +71,11 @@ class SecurityTests(unittest.TestCase):
             client_identifier(
                 {"x-real-ip": "203.0.113.9", "x-forwarded-for": "198.51.100.1"},
                 "127.0.0.1",
+                trust_forwarded=True,
             ),
             "203.0.113.9",
         )
-        self.assertEqual(len(client_identifier({"x-real-ip": "x" * 500}, None)), 128)
+        self.assertEqual(len(client_identifier({"x-real-ip": "x" * 500}, None, trust_forwarded=True)), 128)
 
     def test_client_identifier_ignores_forwarded_for_when_untrusted(self) -> None:
         self.assertEqual(

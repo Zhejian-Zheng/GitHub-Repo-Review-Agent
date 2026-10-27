@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from .http import credential_urlopen as urlopen
 
 
 class AuthError(RuntimeError):
@@ -62,13 +65,16 @@ def get_supabase_user(
         with urlopen(request, timeout=timeout) as response:
             payload: Any = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise AuthError(f"Supabase auth rejected the access token ({exc.code}): {detail}") from exc
-    except URLError as exc:
-        raise AuthError(f"Supabase auth verification failed: {exc.reason}") from exc
-    except json.JSONDecodeError as exc:
+        exc.close()
+        # Auth responses may echo tokens or internal gateway diagnostics.
+        raise AuthError(f"Supabase auth rejected the access token ({exc.code}).") from exc
+    except (URLError, OSError, HTTPException) as exc:
+        raise AuthError("Supabase auth verification failed. Try again later.") from exc
+    except (ValueError, UnicodeError, RecursionError) as exc:
         raise AuthError("Supabase auth returned invalid JSON.") from exc
 
+    if not isinstance(payload, dict):
+        raise AuthError("Supabase auth returned an invalid user object.")
     user_id = payload.get("id")
     if not isinstance(user_id, str) or not user_id:
         raise AuthError("Supabase auth response did not include a user id.")

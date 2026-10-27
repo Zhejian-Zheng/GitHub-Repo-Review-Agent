@@ -7,9 +7,10 @@ from dataclasses import asdict, dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from .findings import effective_findings
+from .http import credential_urlopen as urlopen
 from .models import Finding, ReviewReport
 
 GITHUB_API_URL = "https://api.github.com"

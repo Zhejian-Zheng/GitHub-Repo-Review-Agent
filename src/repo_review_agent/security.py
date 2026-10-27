@@ -72,13 +72,13 @@ def request_token_matches(headers, expected_token: str | None) -> bool:
 
     header_token = headers.get("x-repo-review-token", "")
     if header_token:
-        return hmac.compare_digest(header_token, expected_token)
+        return hmac.compare_digest(header_token.encode("utf-8"), expected_token.encode("utf-8"))
 
     bearer_prefix = "Bearer "
     authorization = headers.get("authorization", "")
     if authorization.startswith(bearer_prefix):
         token = authorization[len(bearer_prefix) :]
-        return hmac.compare_digest(token, expected_token)
+        return hmac.compare_digest(token.encode("utf-8"), expected_token.encode("utf-8"))
 
     return False
 
@@ -87,7 +87,7 @@ def client_identifier(
     headers,
     fallback_host: str | None,
     *,
-    trust_forwarded: bool = True,
+    trust_forwarded: bool = False,
 ) -> str:
     """Return a bounded rate-limit key.
 
