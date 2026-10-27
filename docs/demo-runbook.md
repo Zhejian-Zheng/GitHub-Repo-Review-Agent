@@ -4,19 +4,12 @@ Use this checklist when preparing a Supabase-backed portfolio or product demo. T
 
 ## 1. Apply the Database Schema
 
-For a new Supabase project, open the SQL Editor and run:
-
-```text
-supabase/schema.sql
-```
-
-For an existing project that already had an older history schema, run:
-
-```text
-supabase/migrations/002_repository_ownership_hardening.sql
-supabase/migrations/003_review_jobs.sql
-supabase/migrations/004_table_privileges.sql
-```
+For both new and existing Supabase projects, apply **all** SQL files in
+`supabase/migrations/` in filename order through
+`20261023_inventory_rule_coverage.sql`. The initial migration bootstraps a new
+project; later migrations add the required job, atomic-history and question RPCs.
+`supabase/schema.sql` alone is a legacy bootstrap and cannot run the current backend.
+See [atomic history](atomic-history.md) for local database verification.
 
 Then run:
 
@@ -56,12 +49,11 @@ export VITE_SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
 export VITE_API_BASE_URL="https://github-repo-review-agent-api.onrender.com"
 ```
 
-For a private API demo, also set:
-
-```bash
-export REPO_REVIEW_API_TOKEN="a-long-random-token"
-export VITE_REPO_REVIEW_API_TOKEN="$REPO_REVIEW_API_TOKEN"
-```
+For private API clients, set `REPO_REVIEW_API_TOKEN` on the server and send it in
+`X-Repo-Review-Token`. Do not embed a private token in `VITE_REPO_REVIEW_API_TOKEN`:
+Vite build values are readable in the shipped browser bundle. A public browser demo
+should require Supabase login (`REPO_REVIEW_REQUIRE_AUTH=true`); a bundled shared
+token cannot restrict access to its users.
 
 ## 4. Run the Readiness Check
 
