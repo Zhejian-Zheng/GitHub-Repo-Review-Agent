@@ -19,7 +19,7 @@ from .provider import (
     resolve_model,
 )
 from .redaction import redact_data
-from .report import public_metrics
+from .review_context import build_review_context
 from .review_schema import ReviewSections
 from .telemetry import review_tracing
 
@@ -134,28 +134,7 @@ def build_review_prompt(
     )
     tuning_guidance = build_prompt_tuning_guidance(language)
     few_shot_examples = build_few_shot_examples(language)
-    payload = {
-        "repo_name": report.repo_name,
-        "generated_at": report.generated_at,
-        "overview": report.overview[:20],
-        "metrics": public_metrics(report.metrics),
-        "framework_signals": report.framework_signals,
-        "findings": [
-            {
-                "title": finding.title,
-                "severity": finding.severity,
-                "category": finding.category,
-                "evidence": finding.evidence,
-                "evidence_paths": finding.evidence_paths,
-                "recommendation": finding.recommendation,
-            }
-            for finding in report.findings[:40]
-        ],
-    }
-    if report.metrics.get('review_scope') == 'incremental':
-        payload['review_scope'] = 'incremental'
-        payload['changed_files'] = report.metrics.get('changed_files', [])
-    review_json = json.dumps(redact_data(payload), indent=2, ensure_ascii=False)[:24000]
+    review_json = build_review_context(report)
     return (
         "You are a senior software engineer reviewing a GitHub repository for a hiring portfolio.\n"
         "Use the structured analysis below. Do not invent files, frameworks, or risks that are not supported by the data.\n"

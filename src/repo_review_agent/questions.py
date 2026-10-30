@@ -62,8 +62,8 @@ def _select_evidence(candidates: list[dict], question: str) -> list[dict]:
         return candidates[:8]
     scored = []
     for candidate in candidates:
-        text = ' '.join(candidate[key] for key in (
-            'path', 'title', 'evidence', 'recommendation', 'category', 'rule_id'))
+        text = ' '.join([*candidate['paths'], *(candidate[key] for key in (
+            'title', 'evidence', 'recommendation', 'category', 'rule_id'))])
         score = len(terms & _search_terms(text))
         if score:
             scored.append((score, candidate))
@@ -75,6 +75,32 @@ class Answer(BaseModel):
     model_config = ConfigDict(extra='forbid')
     answer: str = Field(min_length=1, max_length=8000)
     citation_ids: list[int] = Field(max_length=8)
+
+
+def _evidence_groups(finding: dict) -> list[tuple[list[str], str]]:
+    """Split only evidence with an unambiguous recorded path prefix."""
+    paths = [finding['path']] if finding.get('path') else finding.get('evidence_paths', [])
+    if not isinstance(paths, list) or not paths:
+        return []
+    if any(not isinstance(path, str) or not path or '\\' in path
+           or PurePosixPath(path).is_absolute() or '..' in PurePosixPath(path).parts
+           for path in paths):
+        return []
+    paths = list(dict.fromkeys(paths))
+    evidence = finding.get('evidence') or []
+    lines = [str(line) for line in evidence] if isinstance(evidence, list) else [str(evidence)]
+    if len(paths) > 1:
+        groups = {path: [] for path in paths}
+        # Existing rules retain provenance as "path: evidence". Require every
+        # fragment to be attributable; mixed/legacy prose stays a multi-file citation.
+        for fragment in lines:
+            for line in fragment.splitlines():
+                matches = [path for path in paths if line.startswith(path + ':')]
+                if len(matches) != 1:
+                    return [(paths, '\n'.join(lines))]
+                groups[matches[0]].append(line)
+        return [([path], '\n'.join(items)) for path, items in groups.items() if items]
+    return [(paths, '\n'.join(lines))]
 
 
 def _evidence(report: dict) -> list[dict]:
@@ -91,29 +117,25 @@ def _evidence(report: dict) -> list[dict]:
     for finding in raw:
         if not isinstance(finding, dict):
             continue
-        paths = finding.get('evidence_paths') or []
-        if not isinstance(paths, list):
-            paths = []
-        path = finding.get('path') or (paths[0] if paths else None)
-        if not isinstance(path, str) or not path or '\\' in path or PurePosixPath(path).is_absolute() or '..' in PurePosixPath(path).parts:
-            continue
-        evidence = finding.get('evidence') or []
-        quote = '\n'.join(str(line) for line in evidence) if isinstance(evidence, list) else str(evidence)
-        quote = redact_text(quote[:8000])
-        if not quote or '[REDACTED]' in quote:
-            continue
-        start, end = finding.get('start_line'), finding.get('end_line')
-        if not (type(start) is int and type(end) is int and 0 < start <= end):
-            start = end = None
-        key = (path, start, end, quote)
-        if key in seen:
-            continue
-        seen.add(key)
-        candidates.append({'path':path,'start_line':start,'end_line':end,'evidence':quote,
-                           'title':str(finding.get('title','Finding'))[:500],
-                           'category':str(finding.get('category') or '')[:200],
-                           'rule_id':str(finding.get('rule_id') or '')[:200],
-                           'recommendation':str(finding.get('recommendation',''))[:4000]})
+        for paths, quote in _evidence_groups(finding):
+            quote = redact_text(quote[:8000])
+            if not quote or '[REDACTED]' in quote:
+                continue
+            path = paths[0] if len(paths) == 1 else None
+            start, end = finding.get('start_line'), finding.get('end_line')
+            original_paths = [finding['path']] if finding.get('path') else finding.get('evidence_paths')
+            if (original_paths != paths or len(paths) != 1
+                    or not (type(start) is int and type(end) is int and 0 < start <= end)):
+                start = end = None
+            key = (tuple(paths), start, end, quote)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append({'path':path,'paths':paths,'start_line':start,'end_line':end,'evidence':quote,
+                               'title':str(finding.get('title','Finding'))[:500],
+                               'category':str(finding.get('category') or '')[:200],
+                               'rule_id':str(finding.get('rule_id') or '')[:200],
+                               'recommendation':str(finding.get('recommendation',''))[:4000]})
     return candidates
 
 

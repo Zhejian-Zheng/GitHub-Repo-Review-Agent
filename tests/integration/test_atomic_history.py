@@ -417,6 +417,64 @@ class AtomicHistoryIntegrationTests(unittest.TestCase):
                 self.assertEqual(result['unverified_findings_count'], 1)
                 self.assertEqual(self.save(value)['unverified_findings_count'], 1)
 
+    def test_ruff_groups_keep_identity_and_legacy_groups_remain_unverified(self):
+        from dataclasses import replace
+
+        from repo_review_agent.linters import _finding_for_code
+        from repo_review_agent.models import ReviewReport
+
+        def report(count):
+            finding = _finding_for_code('F821', [{'filename': 'app.py',
+                'location': {'row': i + 1, 'column': 1}, 'message': 'Undefined name'}
+                for i in range(count)], Path('.'))
+            return ReviewReport('repo', '', [], {'review_coverage': {
+                'version': 1, 'ruff_complete': True, 'rules_complete': True,
+                'inventory_complete': True, 'inventory_paths': ['app.py']}}, {}, [finding])
+
+        before, after = report(1), report(2)
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                value = payload()
+                value['repo_url'] = f'owner/ruff-{legacy}'
+                old = before
+                if legacy:
+                    old = replace(before, findings=[replace(before.findings[0], rule_id=None,
+                                                           fingerprint='legacy-id')])
+                value['report'] = old.to_dict()
+                self.save(value)
+                value['report'] = after.to_dict()
+                result = self.save(value)
+                self.assertEqual(result['resolved_findings_count'], 0)
+                self.assertEqual(result['unverified_findings_count'], int(legacy))
+                self.assertEqual(result['existing_findings_count'], int(not legacy))
+                self.assertEqual(self.save(value)['unverified_findings_count'], int(legacy))
+                value['report'] = replace(after, findings=[]).to_dict()
+                self.assertGreater(self.save(value)['resolved_findings_count'], 0)
+
+    def test_ruff_resolution_matches_python_when_samples_disappear_or_rules_are_filtered(self):
+        from dataclasses import asdict
+
+        from repo_review_agent.models import Finding, ReviewReport
+        from repo_review_agent.resolution import finding_rechecked, review_policy
+
+        legacy = Finding('Fix 1 Ruff F821 lint finding(s)', 'medium', 'correctness', ['x'], 'Fix', ['app.py'])
+        current = Finding('Fix 2 Ruff F821 lint finding(s)', 'medium', 'correctness', ['x'], 'Fix',
+                          ['other.py'], rule_id='ruff.F821')
+        coverage = {'version': 1, 'ruff_complete': True, 'inventory_complete': True,
+                    'inventory_paths': ['other.py'], 'rules_complete': True}
+        previous = ReviewReport('repo', '', [], {'review_coverage': {
+            **coverage, 'inventory_paths': ['app.py']}}, {}, [legacy])
+        for findings, raw, complete, expected in [([current], [], True, False),
+                ([], [current], True, False), ([], [], False, False), ([], [], True, True)]:
+            report = ReviewReport('repo', '', [], {'review_coverage': {
+                **coverage, 'ruff_complete': complete}}, {}, findings, raw_findings=raw)
+            stored = {**asdict(legacy), 'resolution_context': {
+                'policy': review_policy(previous), 'evidence_was_present': True}}
+            actual = self.db.execute('select review_finding_rechecked(%s,%s)',
+                                     (Jsonb(report.to_dict()), Jsonb(stored))).fetchone()[0]
+            self.assertEqual(actual, expected)
+            self.assertEqual(actual, finding_rechecked(legacy, report, previous))
+
     def test_resolution_decisions_match_python_for_optional_checks_and_deletion(self):
         from repo_review_agent.models import Finding, ReviewReport
         from repo_review_agent.resolution import finding_rechecked

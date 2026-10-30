@@ -174,7 +174,7 @@ The application uses LangChain 1.x and LangGraph 1.x. Both Docker images install
 
 ## Bounded jobs and recovery
 
-Apply **all** files in `supabase/migrations` in filename order through `20261023_inventory_rule_coverage.sql` before deploying this backend to an existing Supabase project. `20261004_review_job_leases.sql` adds atomic admission, claims, leases and fenced completion; the later migrations add finding lifecycle, cancellation, atomic history, resolution coverage, shared question capacity and compressed-report resolution safeguards. `schema.sql` is only a legacy bootstrap. Without Supabase, the queue is bounded but jobs do not survive a process restart.
+Apply **all** files in `supabase/migrations` in filename order through `20261028_ruff_group_resolution.sql` before deploying this backend to an existing Supabase project. `20261004_review_job_leases.sql` adds atomic admission, claims, leases and fenced completion; the later migrations add finding lifecycle, cancellation, atomic history, resolution coverage, shared question capacity, compressed-report resolution safeguards and stable Ruff group resolution. `schema.sql` is only a legacy bootstrap. Without Supabase, the queue is bounded but jobs do not survive a process restart.
 
 The backend checks queued and expired leases every two seconds. A crashed job can be retried up to three times. Computation is at least once, so model calls may repeat after a crash. The atomic-history RPC commits history and durable completion together and deduplicates persistence by job ID. Apply the migrations in a staging database and verify two workers cannot claim the same lease before production rollout; the disposable-Postgres integration suite covers leases, RLS and atomic history.
 
@@ -193,8 +193,17 @@ Optional Langfuse tracing setup is documented in [Langfuse](langfuse.md).
 
 ### History, resolution and question migrations
 
-Before deploying the current history backend, apply every migration through `20261023_inventory_rule_coverage.sql` in filename order. This includes `20261005_finding_lifecycle.sql`, `20261005_job_controls.sql`, `20261006_atomic_history.sql`, `20261008_resolution_coverage.sql`, `20261020_question_capacity.sql`, `20261021_resolution_elided_paths.sql` and `20261023_inventory_rule_coverage.sql`. Saving history requires the atomic transaction RPC and does not fall back to partial multi-write saves. Question capacity fails closed until the question migration exists. Run `supabase/verify_history_schema.sql` after migration; every row must return `pass`. See [atomic history and local PostgreSQL verification](atomic-history.md) and [question capacity](question-capacity.md).
+Before deploying the current history backend, apply every migration through `20261028_ruff_group_resolution.sql` in filename order. This includes `20261005_finding_lifecycle.sql`, `20261005_job_controls.sql`, `20261006_atomic_history.sql`, `20261008_resolution_coverage.sql`, `20261020_question_capacity.sql`, `20261021_resolution_elided_paths.sql`, `20261023_inventory_rule_coverage.sql` and `20261028_ruff_group_resolution.sql`. Saving history requires the atomic transaction RPC and does not fall back to partial multi-write saves. Question capacity fails closed until the question migration exists. Run `supabase/verify_history_schema.sql` after migration; every row must return `pass`. See [atomic history and local PostgreSQL verification](atomic-history.md) and [question capacity](question-capacity.md).
 
+
+### Ruff identity upgrade
+
+Apply `20261028_ruff_group_resolution.sql` before deploying the backend with stable
+Ruff group fingerprints. Existing fingerprints and feedback are preserved. A legacy
+Ruff finding whose rule still produces diagnostics remains unverified instead of
+being falsely marked resolved. Only a complete, clean recheck of that rule resolves
+it; old suppression feedback is not automatically applied to the new identity.
+The migration only replaces functions and adds a helper; it does not rewrite data.
 
 ### Forwarding and credential endpoint policy
 
