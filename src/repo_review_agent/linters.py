@@ -107,6 +107,7 @@ def _finding_for_code(code: str, diagnostics: list[dict], root: Path) -> Finding
         evidence=evidence,
         recommendation=recommendation,
         evidence_paths=_evidence_paths(diagnostics, root),
+        rule_id=f'ruff.{code}',
     )
 
 

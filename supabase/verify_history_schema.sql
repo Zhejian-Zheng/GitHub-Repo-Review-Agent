@@ -357,6 +357,16 @@ with checks as (
     'completed inventory checks can resolve independently of content scan limits'
   union all
   select
+    'function: Ruff rule group resolution',
+    to_regprocedure('public.review_ruff_rule_code(jsonb)') is not null
+      and exists (
+        select 1 from pg_proc p
+        where p.oid = to_regprocedure('public.review_finding_rechecked(jsonb,jsonb)')::oid
+          and p.prosrc ilike '%review_ruff_rule_code%'
+      ),
+    'Ruff counts and legacy identities cannot falsely resolve an active rule group'
+  union all
+  select
     'function: question capacity RPCs',
     to_regprocedure('public.acquire_review_question(uuid,integer,integer,integer,integer)') is not null
       and to_regprocedure('public.release_review_question(uuid)') is not null,

@@ -4,11 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
 from .models import Finding, ReviewReport
+
+
+def ruff_rule_code(finding: Finding) -> str | None:
+    """Recognize current rule groups and legacy display-only Ruff findings."""
+    if finding.source != 'rule':
+        return None
+    match = re.fullmatch(r'ruff\.([A-Z][A-Z0-9]*|syntax-error)', finding.rule_id or '')
+    if not match:
+        match = re.fullmatch(r'Fix \d+ Ruff ([A-Z][A-Z0-9]*|syntax-error) lint finding\(s\)', finding.title)
+    return match[1] if match else None
 
 
 def finding_fingerprint(finding: Finding) -> str:
@@ -23,6 +34,11 @@ def finding_fingerprint(finding: Finding) -> str:
         payload["rule_id"] = finding.rule_id
     if finding.source == "ai":
         payload.update(source="ai", evidence=finding.evidence)
+    code = ruff_rule_code(finding)
+    if code and finding.rule_id == f'ruff.{code}':
+        # A finding represents the whole rule group; samples and counts are display data.
+        # Persisted legacy fingerprints above are deliberately never rewritten.
+        payload = {'identity_version': 'ruff-group-v1', 'source': 'rule', 'rule_id': finding.rule_id}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 

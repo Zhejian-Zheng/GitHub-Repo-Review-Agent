@@ -15,46 +15,12 @@ from pydantic import Field
 from .analyzer import analyze_snapshot
 from .config import ReviewConfig, apply_review_config
 from .incremental import diff_summary, normalize_changed_files
-from .models import AgentStep, Finding, RepositorySnapshot, ReviewReport
+from .models import AgentStep, RepositorySnapshot, ReviewReport
 from .redaction import redact_data, redact_text
 from .report import render_markdown
+from .review_context import finding_summary as _finding_summary
 from .scanner import scan_repository
 from .vulnerabilities import scan_vulnerabilities
-
-
-def _bounded_json_text(value: str, limit: int) -> str:
-    """Bound serialized size, including escaped control characters and quotes."""
-    text = value[:limit]
-    while len(json.dumps(text, ensure_ascii=False)) > limit:
-        text = text[:len(text) // 2]
-    return text
-
-
-def _finding_summary(finding: Finding) -> dict:
-    original = redact_data({
-        'title': finding.title, 'severity': finding.severity,
-        'category': finding.category, 'rule_id': finding.rule_id,
-        'recommendation': finding.recommendation,
-        'evidence_paths': finding.evidence_paths,
-    })
-    summary = dict(original)
-    truncated = []
-    for key, limit in (('title', 400), ('severity', 50), ('category', 150),
-                       ('rule_id', 150), ('recommendation', 1200)):
-        if isinstance(summary[key], str):
-            summary[key] = _bounded_json_text(summary[key], limit)
-            if summary[key] != original[key]:
-                truncated.append(key)
-    # Preserve usable paths verbatim; never invent a path by cutting its suffix.
-    paths = []
-    for path in original['evidence_paths'][:3]:
-        if len(json.dumps([*paths, path], ensure_ascii=False)) <= 1200:
-            paths.append(path)
-    summary['evidence_paths'] = paths
-    if paths != original['evidence_paths']:
-        truncated.append('evidence_paths')
-    summary['truncated_fields'] = truncated
-    return summary
 
 
 def _analysis_page(report: ReviewReport, offset: int, limit: int) -> str:

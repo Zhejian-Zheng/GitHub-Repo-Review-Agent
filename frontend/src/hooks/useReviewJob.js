@@ -25,7 +25,12 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
   const [status, setStatus] = useState("Ready");
   const [isRunning, setIsRunning] = useState(false);
   const [markdown, setMarkdown] = useState("");
-  const [report, setReport] = useState(null);
+  const [report, setReportValue] = useState(null);
+  const [reportVersion, setReportVersion] = useState(0);
+  const setReport = (value) => {
+    setReportValue(value);
+    setReportVersion(version => version + 1);
+  };
   const [progressStep, setProgressStep] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const reportRef = useRef(null);
@@ -185,11 +190,12 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
     }
   };
 
-  const askQuestion = async (question) => {
-    const session = await ensureFreshSession();
+  const askQuestion = async (question, { signal } = {}) => {
+    const session = await ensureFreshSession(authSession, { signal });
+    if (signal?.aborted) throw new DOMException("Report question cancelled.", "AbortError");
     return askReportQuestion({ ...(reportJobId ? { job_id: reportJobId } : { report }), question,
       provider: form.ai_provider, model: form.ai_model || null, language: form.report_language,
-      token_budget: Math.min(20000, normalizeTokenBudget(form.ai_token_budget)) }, session?.access_token);
+      token_budget: Math.min(20000, normalizeTokenBudget(form.ai_token_budget)) }, session?.access_token, { signal });
   };
 
   const copyReport = async () => {
@@ -235,7 +241,7 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
     rememberJob(null);
     setReport(null); setMarkdown(""); setReportJobId(null);
   };
-  return { status, isRunning, markdown, report, progressStep, elapsedSeconds, reportRef,
+  return { status, isRunning, markdown, report, reportVersion, progressStep, elapsedSeconds, reportRef,
     reviewController, pendingJob, isCancelling, runReview, cancelReview, askQuestion,
     copyReport, downloadReport, closeReport, loadDemoReport, resetReview };
 }
