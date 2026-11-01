@@ -209,6 +209,46 @@ class TargetBoundsTests(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError, 'could not be verified'):
                             _check_checkout_budget(root)
 
+    def test_live_scan_tolerates_is_dir_disappearing_between_scandir_and_stat(self) -> None:
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'keep').write_text('ok', encoding='utf-8')
+
+            class VanishingEntry:
+                def __init__(self, path: Path) -> None:
+                    self.path = str(path)
+                    self.name = path.name
+
+                def stat(self, *, follow_symlinks: bool = True):
+                    return Path(self.path).lstat()
+
+                def is_dir(self, *, follow_symlinks: bool = True):
+                    raise FileNotFoundError(self.path)
+
+            class FakeScan:
+                def __init__(self, entries):
+                    self._entries = entries
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def __iter__(self):
+                    return iter(self._entries)
+
+            def scandir(path):
+                path = Path(path)
+                if path == root:
+                    return FakeScan([VanishingEntry(root / 'keep')])
+                raise AssertionError(f'unexpected scandir: {path}')
+
+            with patch('repo_review_agent.targets.os.scandir', side_effect=scandir):
+                _check_checkout_budget(root, cloning=True)
+                with self.assertRaisesRegex(RuntimeError, 'could not be verified'):
+                    _check_checkout_budget(root)
+
     def test_local_target_skips_clone_and_acquisition_budget(self) -> None:
         with TemporaryDirectory() as temp, patch(
             'repo_review_agent.targets.subprocess.Popen'

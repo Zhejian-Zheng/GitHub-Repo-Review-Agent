@@ -123,7 +123,14 @@ def _check_checkout_budget(root: Path, *, cloning: bool = False) -> None:
                         raise
                     if total_bytes >= byte_limit:
                         raise RuntimeError("Repository acquisition budget exceeded.")
-                    if entry.is_dir(follow_symlinks=False):
+                    try:
+                        is_directory = entry.is_dir(follow_symlinks=False)
+                    except FileNotFoundError:
+                        # Git may unlink/rename the entry between scandir and is_dir.
+                        if cloning:
+                            continue
+                        raise
+                    if is_directory:
                         pending.append(Path(entry.path))
     except OSError as exc:
         raise RuntimeError("Repository acquisition budget could not be verified.") from exc
