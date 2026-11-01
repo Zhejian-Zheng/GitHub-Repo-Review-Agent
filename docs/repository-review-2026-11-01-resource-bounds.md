@@ -8,7 +8,7 @@ question evidence and report-instance isolation; see the [follow-up audit](repos
 
 | Boundary | Default | Breach behavior |
 | --- | --- | --- |
-| Cloned checkout plus `.git` objects | `REPO_REVIEW_CLONE_MAX_BYTES=512000000` apparent bytes | Reject acquisition and remove its temporary directory; unreadable metadata also rejects |
+| Cloned checkout plus `.git` objects | `REPO_REVIEW_CLONE_MAX_BYTES=512000000` apparent bytes | Fail closed during and after clone: kill process group, reject acquisition, remove temp dir; unreadable metadata also rejects |
 | Retained inventory | `REPO_REVIEW_MAX_INVENTORY_FILES=10000` regular files | Stop collection, set `inventory_complete=False`, mark `.` as uninspected remainder |
 | Traversal | `REPO_REVIEW_MAX_WALK_ENTRIES=50000` entries | Includes ignored entries, links and directories; partial scan or failed acquisition |
 | JSON POST/PUT/PATCH ingress | 256,000 bytes | 413 before parsing; oversized Content-Length reads no body, absent/dishonest lengths are checked incrementally |
@@ -24,10 +24,19 @@ sorted/deterministic within the admitted inventory; metadata priority and conten
 only observed entries; `skipped_files` is not an estimate of the unknown remainder.
 Incomplete coverage cannot certify absent findings as resolved.
 
-Clone admission is checked **after** Git completes. This does not bound peak disk
-usage during download/checkout; filesystem/container disk quotas remain an open
-deployment requirement. The sum uses apparent sizes, not a filesystem allocation
-accounting claim. Clone diagnostics no longer accumulate in in-memory pipes.
+The `improve/clone-peak-disk` follow-up stacks on PR #4
+(`improve/resource-bounds-followup`). Clone admission is now checked **during**
+download/checkout, at 0.2-second intervals between scans, and again after Git
+completes. Reaching the byte limit or exceeding the entry limit fails closed:
+the clone process group is killed and reaped before its temporary checkout is
+removed. Timeout and probe failures also stop the clone and clean up. Live scans
+tolerate entries disappearing during Git's renames/unlinks; other metadata errors
+reject acquisition, and the post-clone scan remains strict.
+Filesystem/container disk quotas remain defense-in-depth against growth between
+probes and during a scan. The sum includes `.git` and uses apparent sizes without
+following symlinks, not filesystem allocation accounting. Clone diagnostics do
+not accumulate in in-memory pipes. Defaults remain 512,000,000 clone bytes and
+10,000 retained inventory files; no new environment variable is required.
 Socket timeouts and byte caps do not constitute a total deadline for standalone
 HTTP calls; isolated web workers retain their total execution deadline.
 
