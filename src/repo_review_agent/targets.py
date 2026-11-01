@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import tempfile
+import time
+from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -20,15 +23,7 @@ class resolve_target:
             self._tmpdir = tempfile.TemporaryDirectory(prefix="repo-review-")
             clone_path = Path(self._tmpdir.name) / "repo"
             try:
-                subprocess.run(
-                    ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--",
-                     self.target, str(clone_path)],
-                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=max(1, int(os.environ.get("REPO_REVIEW_CLONE_TIMEOUT", "120"))),
-                    stdin=subprocess.DEVNULL,
-                    env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never",
-                             GIT_SSH_COMMAND="ssh -oBatchMode=yes -oConnectTimeout=15"),
-                )
+                _run_monitored_clone(self.target, clone_path)
                 _check_checkout_budget(clone_path)
             except BaseException:
                 self._tmpdir.cleanup()
@@ -51,11 +46,56 @@ def _looks_like_git_url(target: str) -> bool:
     return parsed.scheme in {"http", "https", "ssh", "git"} or target.startswith("git@")
 
 
-def _check_checkout_budget(root: Path) -> None:
+def _run_monitored_clone(target: str, clone_path: Path) -> None:
+    timeout = max(1, int(os.environ.get("REPO_REVIEW_CLONE_TIMEOUT", "120")))
+    command = ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--",
+               target, str(clone_path)]
+    # Git accepts an empty destination; create it before the first size probe.
+    clone_path.mkdir()
+    deadline = time.monotonic() + timeout
+    proc = subprocess.Popen(
+        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL, start_new_session=True,
+        env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never",
+                 GIT_SSH_COMMAND="ssh -oBatchMode=yes -oConnectTimeout=15"),
+    )
+    try:
+        while proc.poll() is None:
+            _check_checkout_budget(clone_path, cloning=True)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                proc.wait(timeout=min(0.2, remaining))
+            except subprocess.TimeoutExpired:
+                continue
+        if proc.returncode:
+            raise subprocess.CalledProcessError(proc.returncode, command)
+    except BaseException:
+        # Stop writers before __enter__ removes the partially populated tree.
+        if os.name == "posix":
+            try:
+                with suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+            except PermissionError:
+                # macOS may report EPERM when the last group member just exited.
+                if proc.poll() is None:
+                    raise
+        else:  # pragma: no cover - Windows process-tree termination.
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, check=True, timeout=10,
+            )
+        proc.wait()
+        raise
+
+
+def _check_checkout_budget(root: Path, *, cloning: bool = False) -> None:
     """Include Git objects and links themselves, never their external targets.
 
-    This is a post-clone admission check; deployment disk quotas are still
-    required to bound transient disk usage while git is running.
+    Used both during and after cloning. Only the live scan tolerates entries
+    disappearing as Git renames/unlinks temporary objects and lock files.
     """
     byte_limit = int_from_env("REPO_REVIEW_CLONE_MAX_BYTES", 512_000_000, minimum=1)
     entry_limit = int_from_env("REPO_REVIEW_MAX_WALK_ENTRIES", 50_000, minimum=1)
@@ -64,13 +104,33 @@ def _check_checkout_budget(root: Path) -> None:
     entries = 0
     try:
         while pending:
-            with os.scandir(pending.pop()) as stream:
+            try:
+                stream = os.scandir(pending.pop())
+            except FileNotFoundError:
+                if cloning:
+                    continue
+                raise
+            with stream:
                 for entry in stream:
                     entries += 1
-                    total_bytes += entry.stat(follow_symlinks=False).st_size
-                    if total_bytes > byte_limit or entries > entry_limit:
+                    if entries > entry_limit:
                         raise RuntimeError("Repository acquisition budget exceeded.")
-                    if entry.is_dir(follow_symlinks=False):
+                    try:
+                        total_bytes += entry.stat(follow_symlinks=False).st_size
+                    except FileNotFoundError:
+                        if cloning:
+                            continue
+                        raise
+                    if total_bytes >= byte_limit:
+                        raise RuntimeError("Repository acquisition budget exceeded.")
+                    try:
+                        is_directory = entry.is_dir(follow_symlinks=False)
+                    except FileNotFoundError:
+                        # Git may unlink/rename the entry between scandir and is_dir.
+                        if cloning:
+                            continue
+                        raise
+                    if is_directory:
                         pending.append(Path(entry.path))
     except OSError as exc:
         raise RuntimeError("Repository acquisition budget could not be verified.") from exc

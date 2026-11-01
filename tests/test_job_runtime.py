@@ -1,7 +1,7 @@
 import sys
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from repo_review_agent import web
 from repo_review_agent.job_runtime import run_isolated
@@ -129,12 +129,18 @@ class JobRuntimeTests(unittest.TestCase):
         def fail(*args, **kwargs):
             captured.append(Path(args[0][-1]).parent)
             self.assertEqual(kwargs["env"]["GIT_TERMINAL_PROMPT"], "0")
-            self.assertGreater(kwargs["timeout"], 0)
-            raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+            self.assertTrue(kwargs["start_new_session"])
+            proc = Mock(pid=12345)
+            proc.poll.return_value = None
+            return proc
 
-        with patch("repo_review_agent.cli.subprocess.run", side_effect=fail), \
-                self.assertRaises(subprocess.TimeoutExpired):
+        with patch("repo_review_agent.targets.subprocess.Popen", side_effect=fail), \
+                patch("repo_review_agent.targets.time.monotonic", side_effect=[0, 121]), \
+                patch("repo_review_agent.targets.os.killpg") as kill, \
+                self.assertRaises(subprocess.TimeoutExpired) as caught:
             resolver.__enter__()
+        self.assertGreater(caught.exception.timeout, 0)
+        kill.assert_called_once()
         self.assertFalse(captured[0].exists())
 
     def test_worker_entrypoint_success_and_redacted_failure(self):
