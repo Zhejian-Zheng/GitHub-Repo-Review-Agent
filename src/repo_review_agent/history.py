@@ -12,6 +12,7 @@ from urllib.parse import quote
 from urllib.request import Request
 
 from .findings import feedback_active, finding_fingerprint
+from .http import ResponseTooLargeError, read_response_bytes
 from .http import credential_urlopen as urlopen
 from .models import Finding, ReviewReport
 from .persistence import history_payload
@@ -418,7 +419,9 @@ class SupabaseHistoryStore:
         )
         try:
             with urlopen(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8")
+                raw = read_response_bytes(response, limit=8_000_000).decode("utf-8")
+        except ResponseTooLargeError as exc:
+            raise HistoryStoreError("Supabase response exceeded its byte limit.") from exc
         except HTTPError as exc:
             exc.close()
             raise HistoryStoreError(

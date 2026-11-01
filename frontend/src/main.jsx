@@ -41,7 +41,7 @@ function App() {
     handleSignIn, handleSignUp, handleGuestContinue, ensureFreshSession, endSession } = useAuthSession(isChinese);
   const { repositories, selectedRepository, projectDetail, isHistoryLoading, historyError,
     loadProjectList, openProjectDetail, updateFeedback, resetHistory } = useProjectHistory(authSession, ensureFreshSession);
-  const { status, isRunning, markdown, report, progressStep, elapsedSeconds, reportRef,
+  const { status, isRunning, markdown, report, reportVersion, progressStep, elapsedSeconds, reportRef,
     reviewController, pendingJob, isCancelling, runReview, cancelReview, askQuestion,
     copyReport, downloadReport, closeReport, loadDemoReport, resetReview } = useReviewJob({
       form, authSession, setAuthSession, ensureFreshSession, isGuestMode, isChinese, runPhases, loadProjectList
@@ -281,7 +281,7 @@ function App() {
             onDownload={downloadReport}
             onClose={closeReport}
           />
-          {report ? <ReportQuestionForm language={form.report_language} onAsk={askQuestion} provider={form.ai_provider} /> : null}
+          {report ? <ReportQuestionForm key={reportVersion} language={form.report_language} onAsk={askQuestion} provider={form.ai_provider} /> : null}
         </div>
       ) : null}
     </main>

@@ -13,6 +13,13 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
+from .http import read_response_bytes
+
+# A blocked storage call keeps its slot until it returns. Fail closed when all
+# slots are occupied instead of accumulating one stranded thread per new job.
+_CANCELLATION_SLOTS = threading.BoundedSemaphore(8)
+WORKER_OUTPUT_MAX_BYTES = 4_000_000
+
 
 def run_isolated(request: dict, user: dict | None, *, timeout: float,
                  on_progress: Callable[[str], None] | None = None,
@@ -29,25 +36,27 @@ def run_isolated(request: dict, user: dict | None, *, timeout: float,
                                 stderr=subprocess.DEVNULL, start_new_session=True)
         deadline = time.monotonic() + timeout
         group_terminated = False
+        group_lock = threading.Lock()
 
         def kill_group() -> None:
             nonlocal group_terminated
-            if group_terminated:
-                return
-            if os.name == "posix":
-                try:
-                    with suppress(ProcessLookupError):
-                        os.killpg(proc.pid, signal.SIGKILL)
-                except PermissionError:
-                    # macOS can report EPERM for a group whose last process
-                    # has just exited. Never hide a failure to kill a live child.
-                    if proc.poll() is None:
-                        raise
-            elif proc.poll() is None:  # pragma: no cover - Windows fallback.
-                proc.kill()
-            # Watchdog and cleanup run sequentially (join below). Avoid sending
-            # a second signal to an exited or potentially reused process group.
-            group_terminated = True
+            with group_lock:
+                if group_terminated:
+                    return
+                if os.name == "posix":
+                    try:
+                        with suppress(ProcessLookupError):
+                            os.killpg(proc.pid, signal.SIGKILL)
+                    except PermissionError:
+                        # macOS can report EPERM for a group whose last process
+                        # has just exited. Never hide a failure to kill a live child.
+                        if proc.poll() is None:
+                            raise
+                elif proc.poll() is None:  # pragma: no cover - Windows fallback.
+                    proc.kill()
+                # Serialize watchdog, monitor and cleanup to avoid signalling
+                # an exited or potentially reused process group twice.
+                group_terminated = True
 
         # The watchdog remains effective even if persisting progress is blocked
         # by a database outage. One watchdog exists per bounded active worker.
@@ -58,31 +67,50 @@ def run_isolated(request: dict, user: dict | None, *, timeout: float,
         cancellation_seen = threading.Event()
         monitor_done = threading.Event()
 
-        def watch_cancellation() -> None:
-            while not monitor_done.wait(0.2):
-                try:
-                    if cancelled and cancelled():
-                        cancellation_seen.set()
-                        kill_group()
-                        return
-                except Exception:
-                    # Transient storage failures do not turn into cancellation.
-                    continue
+        slots = _CANCELLATION_SLOTS
 
-        monitor = threading.Thread(target=watch_cancellation, daemon=True)
-        monitor.start()
+        def watch_cancellation() -> None:
+            try:
+                while not monitor_done.wait(0.2):
+                    try:
+                        is_cancelled = cancelled()
+                        # A late poll may not signal a cleaned/reused process group.
+                        if monitor_done.is_set():
+                            return
+                        if is_cancelled:
+                            cancellation_seen.set()
+                            kill_group()
+                            return
+                    except Exception:
+                        # Transient storage failures do not turn into cancellation.
+                        continue
+            finally:
+                slots.release()
+
+        monitor = None
 
         def read_progress() -> None:
             nonlocal seen
             progress = root / "progress"
             if progress.exists():
-                lines = progress.read_text(encoding="utf-8").splitlines()
+                with progress.open("rb") as stream:
+                    lines = read_response_bytes(stream, limit=64_000).decode("utf-8").splitlines()
                 for phase in lines[seen:]:
                     if phase and on_progress:
                         on_progress(phase)
                 seen = len(lines)
 
         try:
+            if cancelled:
+                if not slots.acquire(blocking=False):
+                    raise RuntimeError("Cancellation monitor capacity exhausted. Try again later.")
+                monitor = threading.Thread(target=watch_cancellation, daemon=True)
+                try:
+                    monitor.start()
+                except BaseException:
+                    monitor = None
+                    slots.release()
+                    raise
             while proc.poll() is None:
                 if cancellation_seen.is_set():
                     raise RuntimeError("Review cancelled.")
@@ -92,7 +120,7 @@ def run_isolated(request: dict, user: dict | None, *, timeout: float,
                     raise RuntimeError("Review exceeded its total execution deadline.")
                 read_progress()
                 time.sleep(0.05)
-            if cancellation_seen.is_set() or (cancelled and cancelled()):
+            if cancellation_seen.is_set():
                 raise RuntimeError("Review cancelled.")
             if time.monotonic() >= deadline:
                 raise RuntimeError("Review exceeded its total execution deadline.")
@@ -103,7 +131,8 @@ def run_isolated(request: dict, user: dict | None, *, timeout: float,
             if proc.returncode != 0:
                 raise RuntimeError("Review worker exited unsuccessfully.")
             try:
-                result = json.loads(output.read_text(encoding="utf-8"))
+                with output.open("rb") as stream:
+                    result = json.loads(read_response_bytes(stream, limit=WORKER_OUTPUT_MAX_BYTES))
             except (OSError, ValueError, RecursionError) as exc:
                 raise RuntimeError("Review worker returned an invalid result.") from exc
             # A valid envelope has exactly one outcome. Never publish a malformed
@@ -118,12 +147,13 @@ def run_isolated(request: dict, user: dict | None, *, timeout: float,
             return result["result"]
         finally:
             monitor_done.set()
-            monitor.join(timeout=1)
             watchdog.cancel()
             watchdog.join()
             # Kill the entire group, including git/linters surviving the child.
             kill_group()
             proc.wait()
+            if monitor is not None:
+                monitor.join(timeout=0.2)
 
 
 def main(workspace: str) -> None:

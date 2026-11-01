@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from urllib.request import Request
 
 from .findings import effective_findings
+from .http import ResponseTooLargeError, read_response_bytes
 from .http import credential_urlopen as urlopen
 from .models import Finding, ReviewReport
 
@@ -272,10 +273,12 @@ class GitHubClient:
         )
         try:
             with urlopen(request, timeout=self.timeout) as response:
-                body = response.read().decode("utf-8")
+                body = read_response_bytes(response).decode("utf-8")
+        except ResponseTooLargeError as exc:
+            raise GitHubIntegrationError("GitHub API response exceeded its byte limit.") from exc
         except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise GitHubIntegrationError(f"GitHub API returned HTTP {exc.code}: {body}") from exc
+            exc.close()
+            raise GitHubIntegrationError(f"GitHub API returned HTTP {exc.code}.") from exc
         except URLError as exc:
             raise GitHubIntegrationError(f"Could not connect to GitHub API: {exc.reason}") from exc
 

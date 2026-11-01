@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { buildDemoReport } from "../src/demoReport.js";
 const user = { id: "user-1", email: "review@example.com" };
 async function setup(page) {
   await page.route("**/mock-auth/auth/v1/**", (route) => route.fulfill({ json: route.request().url().endsWith("/user") ? user : { access_token: "token", refresh_token: "refresh", expires_in: 3600, user } }));
@@ -12,6 +13,61 @@ async function setup(page) {
   await page.locator("button.auth-primary-button").click();
   await expect(page.getByRole("button", { name: "Review repository" })).toBeVisible();
 }
+
+for (const outcome of ["late success", "late failure", "already answered"]) {
+  test(`report replacement clears questions and ignores ${outcome}`, async ({ page }) => {
+    await setup(page);
+    const report = { ...buildDemoReport("en"), repo_name: "old-project-only" };
+    await page.route("**/mock-api/review/jobs", route => route.fulfill({ json: { job_id: "old-job" } }));
+    await page.route("**/mock-api/review/jobs/old-job", route => route.fulfill({ json: {
+      job_id: "old-job", status: "completed", result: { markdown: "# Old report", report }
+    } }));
+    let release, started, finished;
+    const pending = new Promise(resolve => { release = resolve; });
+    const requested = new Promise(resolve => { started = resolve; });
+    const settled = new Promise(resolve => { finished = resolve; });
+    await page.route("**/mock-api/review/questions", async route => {
+      expect(route.request().postDataJSON().job_id).toBe("old-job");
+      started();
+      await pending;
+      await route.fulfill(outcome === "late failure"
+        ? { status: 400, json: { detail: "Old project failure" } }
+        : { json: { answer: "Old project answer", citations: [], limitations: [] } }).catch(() => {});
+      finished();
+    });
+    await page.getByRole("button", { name: "Review repository", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "old-project-only", exact: true })).toBeVisible();
+    await page.getByLabel("Report question").fill("Why is the old project broken?");
+    await page.getByRole("button", { name: "Ask about report", exact: true }).click();
+    await requested;
+    if (outcome === "already answered") {
+      release();
+      await expect(page.locator(".report-question-answer")).toContainText("Old project answer");
+    }
+    await page.getByRole("button", { name: "Demo", exact: true }).click();
+    release();
+    await settled;
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { name: "old-project-only", exact: true })).toHaveCount(0);
+    await expect(page.locator(".report-question-answer")).toHaveCount(0);
+    await expect(page.locator(".report-questions [role=alert]")).toHaveCount(0);
+    await expect(page.getByLabel("Report question")).toHaveValue("");
+    await page.getByLabel("Report question").fill("A new question");
+    await expect(page.getByRole("button", { name: "Ask about report", exact: true })).toBeEnabled();
+  });
+}
+
+test("multi-file report citations display every source without invented line numbers", async ({ page }) => {
+  await setup(page);
+  await page.route("**/mock-api/review/questions", route => route.fulfill({ json: {
+    answer: "Review the shared dependency.", citations: [{ path: null, paths: ["a.py", "b.py"],
+      start_line: null, end_line: null, evidence: "Shared dependency between modules" }], limitations: []
+  } }));
+  await page.getByRole("button", { name: "Demo", exact: true }).click();
+  await page.getByLabel("Report question").fill("Why?");
+  await page.getByRole("button", { name: "Ask about report", exact: true }).click();
+  await expect(page.locator(".report-question-answer code")).toHaveText("a.py, b.py");
+});
 test("login, real phase display, submit review and open history", async ({ page }) => {
   await setup(page);
   let complete = false;
@@ -269,4 +325,22 @@ test("signing out during detail load does not leave history refresh disabled", a
   await expect(page.getByRole("button", { name: "Refresh history" })).toBeEnabled();
   await expect(page.locator(".project-detail-panel")).not.toContainText("Loading project details");
   releaseDetail();
+});
+
+test("a stopped tracker can still cancel its pending backend job", async ({ page }) => {
+  await setup(page);
+  await page.route("**/mock-api/review/jobs", route => route.fulfill({ json: { job_id: "stopped-job" } }));
+  await page.route("**/mock-api/review/jobs/stopped-job", route => route.fulfill({ json: {
+    job_id: "stopped-job", status: "running", phase: "analyzing"
+  } }));
+  await page.route("**/mock-api/review/jobs/stopped-job/cancel", route => route.fulfill({ json: {
+    job_id: "stopped-job", status: "cancelled"
+  } }));
+  await page.getByRole("button", { name: "Review repository", exact: true }).click();
+  await expect(page.locator(".home-status")).toContainText("Run rule checks");
+  await page.getByRole("button", { name: "Stop tracking", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Resume tracking", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel review", exact: true }).click();
+  await expect(page.locator(".home-status")).toHaveText("Review cancelled.");
+  await expect(page.getByRole("button", { name: "Resume tracking", exact: true })).toHaveCount(0);
 });

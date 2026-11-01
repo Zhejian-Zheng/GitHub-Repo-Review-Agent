@@ -116,7 +116,9 @@ class ControlRouteTests(unittest.TestCase):
         class Response:
             def __enter__(self): return self
             def __exit__(self, *args): pass
-            def read(self): return b'true'
+            def read(self, size=-1):
+                body, self.body = getattr(self, "body", b"true"), b""
+                return body[:size]
         def request(req, **kwargs):
             calls.append(req.full_url)
             return Response()

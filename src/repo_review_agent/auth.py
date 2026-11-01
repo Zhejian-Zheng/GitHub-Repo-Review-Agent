@@ -8,6 +8,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
+from .http import ResponseTooLargeError, read_response_bytes
 from .http import credential_urlopen as urlopen
 
 
@@ -63,7 +64,9 @@ def get_supabase_user(
     )
     try:
         with urlopen(request, timeout=timeout) as response:
-            payload: Any = json.loads(response.read().decode("utf-8"))
+            payload: Any = json.loads(read_response_bytes(response, limit=64_000).decode("utf-8"))
+    except ResponseTooLargeError as exc:
+        raise AuthError("Supabase response exceeded its byte limit.") from exc
     except HTTPError as exc:
         exc.close()
         # Auth responses may echo tokens or internal gateway diagnostics.

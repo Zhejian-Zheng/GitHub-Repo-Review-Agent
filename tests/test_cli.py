@@ -312,6 +312,7 @@ class CLITests(unittest.TestCase):
     def test_resolve_target_clones_git_urls(self, mock_run) -> None:
         from repo_review_agent.cli import resolve_target
 
+        mock_run.side_effect = lambda command, **kwargs: Path(command[-1]).mkdir()
         with resolve_target("https://github.com/owner/repo") as repo_path:
             self.assertEqual(repo_path.name, "repo")
             self.assertTrue(repo_path.parent.name.startswith("repo-review-"))

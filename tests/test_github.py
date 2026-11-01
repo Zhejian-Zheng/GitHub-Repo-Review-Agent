@@ -272,7 +272,7 @@ class GitHubIntegrationTests(unittest.TestCase):
     @patch("repo_review_agent.github.urlopen")
     def test_github_client_request_json_success_and_errors(self, mock_urlopen) -> None:
         response = MagicMock()
-        response.__enter__.return_value.read.return_value = b'{"html_url":"https://example.test","number":7}'
+        response.__enter__.return_value = BytesIO(b'{"html_url":"https://example.test","number":7}')
         mock_urlopen.return_value = response
 
         client = GitHubClient(token="token", api_url="https://api.example.test", timeout=1)
@@ -295,14 +295,14 @@ class GitHubIntegrationTests(unittest.TestCase):
             client.create_issue("owner/repo", issue_drafts_from_report(sample_report())[0])
 
         invalid_json_response = MagicMock()
-        invalid_json_response.__enter__.return_value.read.return_value = b"not-json"
+        invalid_json_response.__enter__.return_value = BytesIO(b"not-json")
         mock_urlopen.side_effect = None
         mock_urlopen.return_value = invalid_json_response
         with self.assertRaises(GitHubIntegrationError):
             client.create_issue("owner/repo", issue_drafts_from_report(sample_report())[0])
 
         unexpected_response = MagicMock()
-        unexpected_response.__enter__.return_value.read.return_value = b"[]"
+        unexpected_response.__enter__.return_value = BytesIO(b"[]")
         mock_urlopen.return_value = unexpected_response
         with self.assertRaises(GitHubIntegrationError):
             client.create_issue("owner/repo", issue_drafts_from_report(sample_report())[0])

@@ -1,6 +1,7 @@
 """Evidence required to distinguish resolution from an omitted check."""
 from __future__ import annotations
 
+from .findings import ruff_rule_code
 from .models import Finding, ReviewReport
 
 
@@ -15,12 +16,18 @@ def finding_rechecked(finding: Finding, current: ReviewReport, previous: ReviewR
     """Fail closed for legacy/partial reports, policy changes and model omission."""
     if review_policy(current) != review_policy(previous):
         return False
+    coverage = current.metrics.get('review_coverage') or {}
+    code = ruff_rule_code(finding)
+    if code:
+        # A legacy identity or disappearing sample is not proof the rule group is clean.
+        return (coverage.get('version') == 1 and coverage.get('ruff_complete') is True
+                and not any(ruff_rule_code(item) == code
+                            for item in [*current.findings, *current.raw_findings]))
     paths = set(finding.evidence_paths)
     if finding.path:
         paths.add(finding.path)
     if paths and paths <= (removed_paths or set()):
         return True
-    coverage = current.metrics.get('review_coverage') or {}
     if coverage.get('version') != 1:
         return False
     previous_paths = set((previous.metrics.get('review_coverage') or {}).get('inventory_paths', []))
@@ -39,8 +46,6 @@ def finding_rechecked(finding: Finding, current: ReviewReport, previous: ReviewR
     if finding.rule_id == 'dependency.osv' or finding.category == 'dependency vulnerabilities':
         return (coverage.get('inventory_complete') is True
                 and (current.metrics.get('vulnerability_scan') or {}).get('status') in {'clean', 'findings'})
-    if finding.title.startswith('Fix ') and ' Ruff ' in finding.title:
-        return coverage.get('ruff_complete') is True
     completed = coverage.get('completed_rules')
     if isinstance(completed, list) and finding.title in completed:
         return True

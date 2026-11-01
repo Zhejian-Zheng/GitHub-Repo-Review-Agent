@@ -25,7 +25,12 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
   const [status, setStatus] = useState("Ready");
   const [isRunning, setIsRunning] = useState(false);
   const [markdown, setMarkdown] = useState("");
-  const [report, setReport] = useState(null);
+  const [report, setReportValue] = useState(null);
+  const [reportVersion, setReportVersion] = useState(0);
+  const setReport = (value) => {
+    setReportValue(value);
+    setReportVersion(version => version + 1);
+  };
   const [progressStep, setProgressStep] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const reportRef = useRef(null);
@@ -35,13 +40,28 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
   const [pendingJob, setPendingJob] = useState(storedPendingJob);
   const pendingJobRef = useRef(pendingJob);
   const cancelRequestRef = useRef(0);
+  const cancelController = useRef(null);
   const rememberJob = (job) => {
     pendingJobRef.current = job;
     setPendingJob(job);
     if (job) sessionStorage.setItem("repo-review-pending-job", JSON.stringify(job));
     else sessionStorage.removeItem("repo-review-pending-job");
   };
-  useEffect(() => () => reviewController.current?.abort(), []);
+  useEffect(() => () => {
+    reviewController.current?.abort();
+    reviewController.current = null;
+    cancelRequestRef.current += 1;
+    cancelController.current?.abort();
+  }, []);
+
+  const invalidateReview = () => {
+    reviewController.current?.abort();
+    reviewController.current = null;
+    cancelRequestRef.current += 1;
+    cancelController.current?.abort();
+    setIsCancelling(false);
+    setIsRunning(false);
+  };
 
   useEffect(() => {
     if (!isRunning) return undefined;
@@ -53,9 +73,10 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
 
   const runReview = async (event, resume = false) => {
     event.preventDefault();
-    reviewController.current?.abort();
+    invalidateReview();
     const controller = new AbortController();
     reviewController.current = controller;
+    const isCurrent = () => reviewController.current === controller && !controller.signal.aborted;
     setIsRunning(true);
     setProgressStep(0);
     setElapsedSeconds(0);
@@ -63,31 +84,27 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
     setMarkdown("");
     setReport(null);
     setReportJobId(null);
-    const hadSession = Boolean(authSession?.access_token);
-    const session = await ensureFreshSession(authSession, { signal: controller.signal });
-    if (controller.signal.aborted) {
-      setIsRunning(false);
-      setStatus(isChinese ? "已停止跟踪。" : "Tracking stopped.");
-      return;
-    }
-    if (hadSession && !session?.access_token) {
-      setIsRunning(false);
-      setStatus(isChinese ? "登录已过期，请重新登录后再保存历史。" : "Session expired. Sign in again to save history.");
-      return;
-    }
-
-    const payload = {
-      ...form,
-      ai_model: form.ai_model.trim() || null,
-      ai_token_budget: normalizeTokenBudget(form.ai_token_budget),
-      save_history: Boolean(session?.access_token),
-      history_repo_url: form.target.trim() || null
-    };
-
     try {
+      const hadSession = Boolean(authSession?.access_token);
+      const session = await ensureFreshSession(authSession, { signal: controller.signal });
+      if (!isCurrent()) return;
+      if (hadSession && !session?.access_token) {
+        setStatus(isChinese ? "登录已过期，请重新登录后再保存历史。" : "Session expired. Sign in again to save history.");
+        return;
+      }
+
+      const payload = {
+        ...form,
+        ai_model: form.ai_model.trim() || null,
+        ai_token_budget: normalizeTokenBudget(form.ai_token_budget),
+        save_history: Boolean(session?.access_token),
+        history_repo_url: form.target.trim() || null
+      };
+
       const job = resume && pendingJob
         ? { job_id: pendingJob.id }
         : await submitReviewJob(payload, session?.access_token, { signal: controller.signal });
+      if (!isCurrent()) return;
       rememberJob({ id: job.job_id, userId: session?.user?.id || null, form });
       let pollingSession = session;
       setStatus(
@@ -98,18 +115,20 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
       const data = await waitForReviewJob(job.job_id, session?.access_token, {
         signal: controller.signal,
         getAccessToken: async (signal) => {
+          if (!isCurrent() || signal?.aborted) throw new DOMException("Review tracking stopped.", "AbortError");
           if (!pollingSession) return undefined;
           pollingSession = await getValidSession(pollingSession, { signal });
+          if (!isCurrent() || signal?.aborted) throw new DOMException("Review tracking stopped.", "AbortError");
           if (!pollingSession?.access_token) {
-            if (signal?.aborted) throw new DOMException("Review tracking stopped.", "AbortError");
             clearStoredSession();
             setAuthSession(null);
             throw new Error("Session expired. Sign in again to resume tracking.");
           }
-          if (!controller.signal.aborted) setAuthSession(pollingSession);
+          setAuthSession(pollingSession);
           return pollingSession.access_token;
         },
         onUpdate: (nextJob) => {
+          if (!isCurrent()) return;
           const index = runPhases.findIndex((phase) => phase.key === nextJob.phase);
           if (index >= 0) setProgressStep(index);
           if (["completed", "failed", "cancelled"].includes(nextJob.status)) rememberJob(null);
@@ -122,6 +141,7 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
         }
       });
 
+      if (!isCurrent()) return;
       setReportJobId(job.job_id);
       setMarkdown(data.markdown || "");
       setReport(data.report || null);
@@ -136,9 +156,10 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
         loadProjectList(session.access_token, { silent: true });
       }
       window.requestAnimationFrame(() => {
-        reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (isCurrent()) reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     } catch (error) {
+      if (!isCurrent()) return;
       const guestMessage =
         isGuestMode && /sign in/i.test(error.message)
           ? isChinese
@@ -149,7 +170,12 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
         ? (isChinese ? "已停止跟踪；后台任务可能仍在运行，可恢复跟踪。" : "Tracking stopped. The backend job may still be running; you can resume tracking.")
         : `Review failed: ${guestMessage}`);
     } finally {
-      setIsRunning(false);
+      if (reviewController.current === controller) {
+        setIsRunning(false);
+        if (controller.signal.aborted) {
+          setStatus(isChinese ? "已停止跟踪；后台任务可能仍在运行，可恢复跟踪。" : "Tracking stopped. The backend job may still be running; you can resume tracking.");
+        }
+      }
     }
   };
 
@@ -158,20 +184,22 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
     if (!jobToCancel || isCancelling) return;
     const controller = reviewController.current;
     const cancelRequest = ++cancelRequestRef.current;
+    const requestController = new AbortController();
+    cancelController.current = requestController;
     setIsCancelling(true);
     try {
-      const session = await ensureFreshSession();
+      const session = await ensureFreshSession(authSession, { signal: requestController.signal });
+      if (!cancellationTargetsCurrentJob(
+          jobToCancel.id, pendingJobRef.current, controller, reviewController.current)) return;
       if (!session?.access_token) throw new Error("Sign in to cancel your review.");
       const job = await cancelReviewJob(jobToCancel.id, session.access_token);
       const current = cancellationTargetsCurrentJob(
         jobToCancel.id, pendingJobRef.current, controller, reviewController.current);
       if (!current) return;
       if (job.status === "cancelled") {
-        reviewController.current?.abort();
+        invalidateReview();
         rememberJob(null);
-        setIsRunning(false);
-        // The aborted tracker settles first; show the server's confirmed result.
-        setTimeout(() => setStatus(isChinese ? "评审已取消。" : "Review cancelled."), 0);
+        setStatus(isChinese ? "评审已取消。" : "Review cancelled.");
       } else {
         setStatus(`Review ${job.status}.`);
       }
@@ -185,11 +213,12 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
     }
   };
 
-  const askQuestion = async (question) => {
-    const session = await ensureFreshSession();
+  const askQuestion = async (question, { signal } = {}) => {
+    const session = await ensureFreshSession(authSession, { signal });
+    if (signal?.aborted) throw new DOMException("Report question cancelled.", "AbortError");
     return askReportQuestion({ ...(reportJobId ? { job_id: reportJobId } : { report }), question,
       provider: form.ai_provider, model: form.ai_model || null, language: form.report_language,
-      token_budget: Math.min(20000, normalizeTokenBudget(form.ai_token_budget)) }, session?.access_token);
+      token_budget: Math.min(20000, normalizeTokenBudget(form.ai_token_budget)) }, session?.access_token, { signal });
   };
 
   const copyReport = async () => {
@@ -214,12 +243,14 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
   };
 
   const closeReport = () => {
+    invalidateReview();
     setMarkdown("");
     setReport(null);
     setStatus("Report closed.");
   };
 
   const loadDemoReport = () => {
+    invalidateReview();
     setReportJobId(null);
     const demoReport = buildDemoReport(form.report_language);
     setReport(demoReport);
@@ -231,11 +262,12 @@ export function useReviewJob({ form, authSession, setAuthSession, ensureFreshSes
   };
 
   const resetReview = () => {
-    reviewController.current?.abort();
+    invalidateReview();
+    setStatus("Ready");
     rememberJob(null);
     setReport(null); setMarkdown(""); setReportJobId(null);
   };
-  return { status, isRunning, markdown, report, progressStep, elapsedSeconds, reportRef,
+  return { status, isRunning, markdown, report, reportVersion, progressStep, elapsedSeconds, reportRef,
     reviewController, pendingJob, isCancelling, runReview, cancelReview, askQuestion,
     copyReport, downloadReport, closeReport, loadDemoReport, resetReview };
 }

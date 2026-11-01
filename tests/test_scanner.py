@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,6 +8,74 @@ from repo_review_agent.scanner import _relative_path, read_text_file, scan_repos
 
 
 class ScannerTests(unittest.TestCase):
+    def test_inventory_budget_marks_partial_coverage(self) -> None:
+        from repo_review_agent.analyzer import analyze_snapshot
+
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "REPO_REVIEW_MAX_INVENTORY_FILES": "3",
+        }):
+            root = Path(tmp)
+            for index in range(30):
+                (root / f"file{index:02}.py").write_text("pass")
+            snapshot = scan_repository(root, max_files=1, max_file_size=10)
+            report = analyze_snapshot(snapshot, root)
+        self.assertEqual(len(snapshot.inventory_files), 3)
+        self.assertEqual(len(snapshot.files), 1)
+        self.assertFalse(snapshot.inventory_complete)
+        self.assertIn(".", snapshot.uninspected_paths)
+        self.assertFalse(report.metrics["review_coverage"]["rules_complete"])
+        self.assertEqual(report.metrics["review_coverage"]["completed_rules"], [])
+
+    def test_walk_budget_bounds_wide_ignored_and_symlink_trees(self) -> None:
+        for kind in ("file", "ignored", "symlink"):
+            with self.subTest(kind=kind), TemporaryDirectory() as tmp, patch.dict(os.environ, {
+                "REPO_REVIEW_MAX_WALK_ENTRIES": "4",
+            }):
+                root = Path(tmp)
+                for index in range(30):
+                    path = root / str(index)
+                    if kind == "symlink":
+                        path.symlink_to(root / "missing")
+                    else:
+                        path.touch()
+                snapshot = scan_repository(root, ignore_patterns=("*",) if kind == "ignored" else ())
+            self.assertFalse(snapshot.inventory_complete)
+            self.assertLessEqual(len(snapshot.inventory_files), 4)
+            self.assertLessEqual(len(snapshot.top_level_items), 4)
+            self.assertLessEqual(len(snapshot.uninspected_paths), 5)
+
+    def test_wide_directory_stops_consuming_entries_at_walk_budget(self) -> None:
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        visited = []
+
+        @contextmanager
+        def scandir(path: Path):
+            def entries():
+                for index in range(1_000_000):
+                    visited.append(index)
+                    yield SimpleNamespace(name=str(index), path=str(path / str(index)))
+            yield entries()
+
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "REPO_REVIEW_MAX_WALK_ENTRIES": "4",
+        }), patch("repo_review_agent.scanner.os.scandir", side_effect=scandir):
+            snapshot = scan_repository(Path(tmp))
+        self.assertEqual(len(visited), 5)
+        self.assertFalse(snapshot.inventory_complete)
+        self.assertEqual(snapshot.inventory_files, [])
+
+    def test_exact_inventory_limit_can_still_certify_complete_inventory(self) -> None:
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "REPO_REVIEW_MAX_INVENTORY_FILES": "1", "REPO_REVIEW_MAX_WALK_ENTRIES": "1",
+        }):
+            root = Path(tmp)
+            (root / "README.md").write_text("hello")
+            snapshot = scan_repository(root)
+        self.assertTrue(snapshot.inventory_complete)
+        self.assertEqual(snapshot.top_level_items, ["README.md"])
+
     def test_inventory_survives_content_cap_and_counts_all_omissions(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -37,7 +106,7 @@ class ScannerTests(unittest.TestCase):
     def test_unreadable_top_level_marks_inventory_incomplete(self) -> None:
         with (
             TemporaryDirectory() as tmp,
-            patch.object(Path, "iterdir", side_effect=PermissionError("denied")),
+            patch("repo_review_agent.scanner.os.scandir", side_effect=PermissionError("denied")),
         ):
             snapshot = scan_repository(Path(tmp))
         self.assertFalse(snapshot.inventory_complete)

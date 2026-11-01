@@ -13,7 +13,7 @@ from repo_review_agent.auth import (
 
 class FakeResponse:
     def __init__(self, body: bytes) -> None:
-        self.body = body
+        self.body = BytesIO(body)
 
     def __enter__(self):
         return self
@@ -21,8 +21,8 @@ class FakeResponse:
     def __exit__(self, exc_type, exc, tb):  # type: ignore[no-untyped-def]
         return None
 
-    def read(self) -> bytes:
-        return self.body
+    def read(self, size: int = -1) -> bytes:
+        return self.body.read(size)
 
 
 class AuthTests(unittest.TestCase):

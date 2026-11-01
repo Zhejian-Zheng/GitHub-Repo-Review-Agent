@@ -6,7 +6,7 @@ Use this checklist when preparing a Supabase-backed portfolio or product demo. T
 
 For both new and existing Supabase projects, apply **all** SQL files in
 `supabase/migrations/` in filename order through
-`20261023_inventory_rule_coverage.sql`. The initial migration bootstraps a new
+`20261028_ruff_group_resolution.sql`. The initial migration bootstraps a new
 project; later migrations add the required job, atomic-history and question RPCs.
 `supabase/schema.sql` alone is a legacy bootstrap and cannot run the current backend.
 See [atomic history](atomic-history.md) for local database verification.
@@ -18,6 +18,11 @@ supabase/verify_history_schema.sql
 ```
 
 Every verification row should return `status = pass`.
+
+If the project already has migrations through October 23, run only
+`supabase/migrations/20261028_ruff_group_resolution.sql`, then the verifier,
+before deploying the updated backend. This migration updates resolution functions;
+it does not rewrite findings or transfer old feedback to new Ruff identities.
 
 ## 2. Configure Auth
 
