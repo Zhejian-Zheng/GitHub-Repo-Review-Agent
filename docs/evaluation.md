@@ -8,7 +8,7 @@ repo-review-evaluate tests/fixtures/evaluation/dataset.json --output evaluation.
 python -m repo_review_agent.evaluation tests/fixtures/evaluation/dataset.json --output evaluation.json
 ```
 
-A dataset is a JSON object with up to 50 cases. Each case has a unique `id`, a local `target` directory inside the dataset directory, and finding title labels. `expected_findings` lists required findings; `forbidden_findings` lists known false positives. Optional `acceptable_findings` must be an exhaustive list of allowed finding titles before a precision score is meaningful. The bundled cases use partial labels and report precision as unavailable.
+A dataset is a JSON object with up to 50 cases. Each case has a unique `id`, a local `target` directory inside the dataset directory, and finding title labels. `expected_findings` lists required findings; `forbidden_findings` lists known false positives. Optional `acceptable_findings` must be an exhaustive list of allowed finding titles before a precision score is meaningful. The two bundled hygiene cases have exhaustive acceptable-title labels; their precision applies only to those fixtures. Datasets without exhaustive labels report precision as unavailable.
 
 ```json
 {"cases":[{"id":"small-service","target":"small-service",
@@ -57,3 +57,20 @@ Use an explicit model for comparisons. Keep the output's dataset hash, model, tr
 `evidence_location_precision` and `evidence_location_recall` match valid exact quotes to bounded labeled ranges, one candidate per defect. Duplicate claims, invented quotes and wrong files do not improve the score. These are evidence-location metrics, **not semantic correctness**: a wrong claim can quote the right line. `semantic_precision` and `semantic_recall` remain null until independently adjudicated outside this automatic scorer.
 
 For human adjudication, record for each candidate: case/trial, candidate fingerprint, true defect or false positive, matching label ID (if any), and a short reasoning note. Count each expected defect at most once for recall, and include every claim in the precision denominator. Inspect the entire cross-file flow; on clean cases, any claimed code defect needs a documented label correction or counts as a false positive. Review provider failures separately from missed defects. The existing two hygiene fixtures now include exhaustive acceptable titles, so their precision is meaningful for that small dataset only.
+
+
+## Adjudication status (2026-11-01)
+
+Semantic model accuracy remains **Open**. The resource-bound follow-up ran no live
+model evaluations and collected no independent human judgments. The six curated
+semantic fixtures are candidates for adjudication, not an adjudicated benchmark.
+Do not fill `semantic_precision` or `semantic_recall` from hygiene-title matches,
+quotation validity, evidence-location scores, or synthetic expected labels alone.
+
+For a reviewable adjudication record, retain the dataset hash and code revision,
+provider/model and trial, every emitted candidate fingerprint, reviewer and date,
+verdict (`true_defect`, `false_positive`, or `unresolved`), matching label ID and
+source-based reasoning. Record missed labels separately and resolve disputed
+labels before computing aggregate scores. Publish denominators and unresolved
+counts alongside scores; do not silently omit failed model runs. No adjudication
+rows or model-quality numbers are supplied here because none were collected.

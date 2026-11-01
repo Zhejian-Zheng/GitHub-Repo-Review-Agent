@@ -326,3 +326,21 @@ test("signing out during detail load does not leave history refresh disabled", a
   await expect(page.locator(".project-detail-panel")).not.toContainText("Loading project details");
   releaseDetail();
 });
+
+test("a stopped tracker can still cancel its pending backend job", async ({ page }) => {
+  await setup(page);
+  await page.route("**/mock-api/review/jobs", route => route.fulfill({ json: { job_id: "stopped-job" } }));
+  await page.route("**/mock-api/review/jobs/stopped-job", route => route.fulfill({ json: {
+    job_id: "stopped-job", status: "running", phase: "analyzing"
+  } }));
+  await page.route("**/mock-api/review/jobs/stopped-job/cancel", route => route.fulfill({ json: {
+    job_id: "stopped-job", status: "cancelled"
+  } }));
+  await page.getByRole("button", { name: "Review repository", exact: true }).click();
+  await expect(page.locator(".home-status")).toContainText("Run rule checks");
+  await page.getByRole("button", { name: "Stop tracking", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Resume tracking", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel review", exact: true }).click();
+  await expect(page.locator(".home-status")).toHaveText("Review cancelled.");
+  await expect(page.getByRole("button", { name: "Resume tracking", exact: true })).toHaveCount(0);
+});

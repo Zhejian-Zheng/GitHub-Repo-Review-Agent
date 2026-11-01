@@ -42,8 +42,9 @@ try:
     import uvicorn
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, HTMLResponse
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
+    from starlette.types import ASGIApp, Receive, Scope, Send
 except ImportError as exc:  # pragma: no cover - optional dependency guard.
     raise RuntimeError(
         "Web dependencies are not installed. Run `python -m pip install -e .[web]`."
@@ -88,6 +89,47 @@ repo-review-web</pre>
 </html>"""
 
 
+class RequestBodyLimitMiddleware:
+    """Bound JSON ingress before FastAPI buffers or parses the request body."""
+
+    def __init__(self, app: ASGIApp, limit: int = 256_000) -> None:
+        self.app = app
+        self.limit = limit
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] not in {"POST", "PUT", "PATCH"}:
+            await self.app(scope, receive, send)
+            return
+        for name, value in scope.get("headers", []):
+            if name.lower() == b"content-length":
+                try:
+                    length = int(value)
+                except ValueError:
+                    length = -1
+                if length < 0 or length > self.limit:
+                    await JSONResponse({"detail": "Request body exceeds byte limit or has invalid length."},
+                                       status_code=413)(scope, receive, send)
+                    return
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            if len(body) + len(chunk) > self.limit:
+                await JSONResponse({"detail": "Request body exceeds byte limit."},
+                                   status_code=413)(scope, receive, send)
+                return
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+
+        async def bounded_receive() -> dict:
+            return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+        await self.app(scope, bounded_receive, send)
+
+
 def create_app() -> FastAPI:
     review_jobs = build_review_job_store()
 
@@ -108,6 +150,7 @@ def create_app() -> FastAPI:
                 shutdown()
 
     app = FastAPI(title="GitHub Repo Review Agent", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(RequestBodyLimitMiddleware)
     configure_cors(app)
 
     @app.get("/healthz")

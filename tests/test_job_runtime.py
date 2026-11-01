@@ -8,6 +8,15 @@ from repo_review_agent.job_runtime import run_isolated
 
 
 class JobRuntimeTests(unittest.TestCase):
+    def test_oversized_worker_output_is_rejected(self) -> None:
+        code = (
+            "import os,pathlib; "
+            "pathlib.Path(os.environ['TMPDIR'],'output.json').write_text("
+            "'{\"result\":{\"padding\":\"' + 'x' * 8_000_000 + '\"}}')"
+        )
+        with self.assertRaisesRegex(RuntimeError, "(invalid result|byte limit)"):
+            run_isolated({}, None, timeout=5, command=[sys.executable, "-c", code])
+
     def test_deadline_kills_process_and_returns_capacity(self):
         start = time.monotonic()
         with self.assertRaisesRegex(RuntimeError, "deadline"):

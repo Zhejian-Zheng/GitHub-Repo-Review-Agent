@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
 import os
 import stat
 from collections import Counter
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
 from .config import path_is_ignored
 from .models import RepoFile, RepositorySnapshot
+from .security import int_from_env
 
 IGNORED_DIRS = {
     ".git",
@@ -126,27 +129,39 @@ def scan_repository(
     skipped_file_paths: list[str] = []
     walk_errors: list[OSError] = []
     uninspected_paths: list[str] = []
+    top_level_items: list[str] = []
+    inventory_limit = int_from_env("REPO_REVIEW_MAX_INVENTORY_FILES", 10_000, minimum=1)
+    walk_limit = int_from_env("REPO_REVIEW_MAX_WALK_ENTRIES", 50_000, minimum=1)
+    budget_exceeded = False
 
-    for path in _iter_files(root, onerror=walk_errors.append, ignore_patterns=ignore_patterns,
-                            onexcluded=uninspected_paths.append):
-        rel_path = _relative_path(root, path)
-        try:
-            metadata = path.lstat()
-        except OSError as error:
-            walk_errors.append(error)
-            skipped_file_paths.append(rel_path)
-            continue
-        if not stat.S_ISREG(metadata.st_mode):
-            uninspected_paths.append(rel_path)
-            continue
-        suffix = path.suffix.lower()
-        language = LANGUAGE_BY_SUFFIX.get(suffix)
-        inventory.append(RepoFile(
-            path=rel_path, size_bytes=metadata.st_size, suffix=suffix,
-            kind=_classify_file(rel_path, path.name, language), language=language,
-        ))
+    try:
+        for path in _iter_files(root, onerror=walk_errors.append, ignore_patterns=ignore_patterns,
+                                onexcluded=uninspected_paths.append, max_entries=walk_limit,
+                                ontoplevel=top_level_items.append):
+            if len(inventory) >= inventory_limit:
+                raise InventoryLimitError("Repository inventory file budget exceeded.")
+            rel_path = _relative_path(root, path)
+            try:
+                metadata = path.lstat()
+            except OSError as error:
+                walk_errors.append(error)
+                skipped_file_paths.append(rel_path)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                uninspected_paths.append(rel_path)
+                continue
+            suffix = path.suffix.lower()
+            language = LANGUAGE_BY_SUFFIX.get(suffix)
+            inventory.append(RepoFile(
+                path=rel_path, size_bytes=metadata.st_size, suffix=suffix,
+                kind=_classify_file(rel_path, path.name, language), language=language,
+            ))
+    except InventoryLimitError as error:
+        budget_exceeded = True
+        uninspected_paths.append(".")  # The unvisited remainder is unknown, not an exact skipped count.
+        logging.getLogger(__name__).warning("%s", error)
 
-    # Keep a complete path inventory, but bound the files eligible for content
+    # Keep a bounded path inventory and separately bound files eligible for content
     # inspection. Important metadata takes precedence over alphabetical source files.
     def priority(file: RepoFile) -> tuple[int, str, str]:
         name = file.path.lower()
@@ -171,15 +186,7 @@ def scan_repository(
         file.language for file in inventory
         if file.kind == "source" and file.language in SOURCE_LANGUAGES
     )
-    try:
-        top_level_items = sorted(
-            item.name for item in root.iterdir()
-            if item.name not in EXCLUDED_DIRS and not item.is_symlink()
-            and not path_is_ignored(item.name, ignore_patterns)
-        )
-    except OSError as error:
-        walk_errors.append(error)
-        top_level_items = []
+    top_level_items.sort()
     return RepositorySnapshot(
         root=str(root), name=root.name, files=files, top_level_items=top_level_items,
         dependency_files=sorted(file.path for file in inventory if file.kind == "dependency"),
@@ -190,27 +197,61 @@ def scan_repository(
         language_counts=dict(language_counts),
         total_size_bytes=sum(file.size_bytes for file in files),
         skipped_files=len(skipped_file_paths), skipped_file_paths=skipped_file_paths,
-        inventory_files=inventory, inventory_complete=not walk_errors,
+        inventory_files=inventory, inventory_complete=not walk_errors and not budget_exceeded,
         uninspected_paths=uninspected_paths,
     )
 
 
-def _iter_files(root: Path, *, onerror=None, ignore_patterns=(), onexcluded=None):
-    for dirpath, dirnames, filenames in os.walk(root, onerror=onerror, followlinks=False):
-        if onexcluded:
-            for name in dirnames + filenames:
-                path = Path(dirpath) / name
-                if path.is_symlink():
-                    onexcluded(_relative_path(root, path))
-        dirnames[:] = sorted(
-            name for name in dirnames
-            if name not in EXCLUDED_DIRS and not (Path(dirpath) / name).is_symlink()
-            and not path_is_ignored(_relative_path(root, Path(dirpath) / name), ignore_patterns)
-        )
-        for filename in sorted(filenames):
-            path = Path(dirpath) / filename
-            if not path.is_symlink() and not path_is_ignored(_relative_path(root, path), ignore_patterns):
-                yield path
+class InventoryLimitError(RuntimeError):
+    """Traversal stopped before the complete repository could be inspected."""
+
+
+def _iter_files(root: Path, *, onerror: Callable[[OSError], None] | None = None,
+                ignore_patterns: Sequence[str] = (), onexcluded: Callable[[str], None] | None = None,
+                max_entries: int = 50_000, ontoplevel: Callable[[str], None] | None = None,
+                ) -> Iterator[Path]:
+    # os.walk builds a full directory listing before yielding. Bound scandir
+    # buffering (including excluded entries) before sorting for stable selection.
+    pending = [root]
+    visited = 0
+    while pending:
+        directory = pending.pop()
+        entries = []
+        try:
+            with os.scandir(directory) as stream:
+                for entry in stream:
+                    visited += 1
+                    if visited > max_entries:
+                        raise InventoryLimitError("Repository walk entry budget exceeded.")
+                    entries.append(entry)
+        except OSError as error:
+            if onerror:
+                onerror(error)
+            continue
+        directories = []
+        for entry in sorted(entries, key=lambda item: item.name):
+            path = Path(entry.path)
+            relative = _relative_path(root, path)
+            try:
+                if entry.is_symlink():
+                    if onexcluded:
+                        onexcluded(relative)
+                    continue
+                if path_is_ignored(relative, ignore_patterns):
+                    continue
+                is_directory = entry.is_dir(follow_symlinks=False)
+                if is_directory and entry.name in EXCLUDED_DIRS:
+                    continue
+                if directory == root and ontoplevel:
+                    ontoplevel(entry.name)
+                if is_directory:
+                    directories.append(path)
+                else:
+                    yield path
+            except OSError as error:
+                if onerror:
+                    onerror(error)
+        pending.extend(reversed(directories))
 
 
 def _relative_path(root: Path, path: Path) -> str:
